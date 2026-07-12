@@ -1,0 +1,13 @@
+node_modules/
+dist/
+build/
+.env
+*.log
+.DS_Store
+backend/prisma/dev.db*
+backend/uploads/
+test-list.csv
+
+# Local snapshot / archive artifacts (not source)
+*.zip
+backend/Whatsapp.zip

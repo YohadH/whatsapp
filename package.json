@@ -1,0 +1,14 @@
+{
+  "name": "whatsapp-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Root orchestrator: lets Render's default commands build the React frontend and run the Express backend (which serves the built frontend). --include=dev is required because NODE_ENV=production would otherwise skip vite (frontend build) and prisma (backend generate).",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "cd frontend && npm install --include=dev && npm run build && cd ../backend && npm install --include=dev",
+    "postinstall": "npm run build",
+    "start": "cd backend && npm start"
+  }
+}

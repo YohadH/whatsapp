@@ -1,0 +1,90 @@
+# Render Blueprint — ONE web service that builds the React admin app and serves
+# it from the Express backend (single URL, no CORS, one-click deploy).
+# Deploy: Render dashboard → New + → Blueprint → pick this repo.
+# Secrets (sync:false) are entered once in the Render dashboard, never in git.
+services:
+  - type: web
+    name: whatsapp-app
+    runtime: node
+    region: frankfurt # same region as the Supabase project (eu-central)
+    # "starter" (not free): free instances spin down when idle, which drops
+    # inbound webhooks during cold start and kills a broadcast job mid-run.
+    plan: starter
+    # Broadcast jobs hold in-memory stop flags in the web process, so keep a
+    # single instance — scaling >1 could double-run a job.
+    numInstances: 1
+    buildCommand: cd frontend && npm ci --include=dev && npm run build && cd ../backend && npm ci --include=dev
+    # Apply pending Prisma migrations on deploy so schema changes ship with code.
+    preDeployCommand: cd backend && npx prisma migrate deploy
+    startCommand: cd backend && npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      # ── Database / Supabase ──
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_STORAGE_BUCKET
+        value: voice-notes
+      # ── Auth ──
+      - key: JWT_SECRET
+        generateValue: true # Render generates a strong secret on first deploy
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      # AES-256-GCM key (32 bytes hex) for encrypting per-tenant WhatsApp tokens.
+      # Generate once: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+      - key: CREDENTIALS_ENC_KEY
+        sync: false
+      # Platform super-admin bootstrap (used by `npm run db:seed`).
+      - key: SUPERADMIN_EMAIL
+        sync: false
+      - key: SUPERADMIN_PASSWORD
+        sync: false
+      # ── OpenAI ──
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4o-mini
+      # ── WhatsApp Cloud API (master / fallback account) ──
+      # In multi-tenant operation each tenant stores its own credentials; these
+      # env creds are the master fallback and seed the default tenant on migration.
+      - key: WHATSAPP_TOKEN
+        sync: false
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        sync: false
+      - key: WHATSAPP_BUSINESS_ACCOUNT_ID # WABA id — needed to list message templates
+        sync: false
+      - key: WHATSAPP_VERIFY_TOKEN
+        sync: false
+      - key: WHATSAPP_APP_SECRET # verifies inbound webhook HMAC signatures
+        sync: false
+      - key: WHATSAPP_API_VERSION
+        value: v21.0
+      # ── Meta Embedded Signup (onboard a customer's WABA in a few clicks) ──
+      - key: META_APP_ID
+        sync: false
+      - key: META_CONFIG_ID # Embedded Signup configuration id
+        sync: false
+      # ── Observability ──
+      - key: SENTRY_DSN # error tracking (leave empty to disable)
+        sync: false
+      # ── Public URL (set to this service's URL after first deploy) ──
+      - key: PUBLIC_BASE_URL
+        sync: false
+      # ── Legal pages (Meta app token) ──
+      - key: LEGAL_APP_NAME
+        value: WhatsApp Business AI Agent
+      - key: LEGAL_COMPANY_NAME
+        sync: false
+      - key: LEGAL_CONTACT_EMAIL
+        sync: false
+      - key: LEGAL_WEBSITE_URL
+        sync: false
+      - key: LEGAL_EFFECTIVE_DATE
+        value: "2026-06-09"
