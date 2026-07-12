@@ -1,0 +1,376 @@
+// WhatsApp Business AI Agent — data model (PostgreSQL / Supabase)
+//
+// MULTI-TENANT: every business is a `Tenant`. Every domain row carries a
+// `tenantId` and is filtered by it in the app layer (see lib/tenantScope.js and
+// middleware/tenant.js). WhatsApp credentials, branding and plan/limits live on
+// the Tenant, so one deployment serves many businesses; inbound webhooks are
+// routed to the right tenant by the Meta phone_number_id.
+//
+// NOTE: status/sender/question-type are kept as String (validated in app code)
+// rather than Postgres enums, to keep the values flexible. tags / triggerWords /
+// options / metadata / rawPayload are native jsonb (Prisma `Json`).
+// The matching SQL lives in backend/supabase/schema.sql.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Tenant (one business / customer of the platform)
+// ─────────────────────────────────────────────────────────────
+model Tenant {
+  id     String @id @default(cuid())
+  name   String
+  slug   String @unique // URL-safe id: used for the public /l/:slug bio page
+  status String @default("active") // active | suspended | trial
+
+  // ── WhatsApp Cloud API credentials (per tenant) ──
+  // waPhoneNumberId is how inbound webhooks are routed to this tenant. The token
+  // is stored encrypted (AES-256-GCM, see lib/crypto.js) — never in plaintext.
+  waPhoneNumberId     String? @unique
+  waBusinessAccountId String?
+  waTokenEnc          String? // encrypted access token
+  waVerifyToken       String? // webhook GET-handshake token (per Meta app)
+  waApiVersion        String  @default("v21.0")
+
+  // ── Branding / localization ──
+  displayName String?
+  bioTitle    String?
+  bioSubtitle String?
+  locale      String  @default("he")
+  currency    String  @default("ILS")
+  timezone    String  @default("Asia/Jerusalem")
+
+  // ── Legal (per-tenant privacy/terms identity) ──
+  legalCompanyName String?
+  legalContactEmail String?
+  legalWebsiteUrl   String?
+
+  // ── Billing / plan ──
+  plan                String    @default("trial") // trial | starter | pro
+  dailyBroadcastCap   Int       @default(250) // rolling-24h business-initiated cap
+  monthlyMessageLimit Int       @default(1000) // soft cap on agent messages/period
+  messagesThisPeriod  Int       @default(0)
+  periodStartedAt     DateTime  @default(now())
+  trialEndsAt         DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  admins        AdminUser[]
+  customers     Customer[]
+  conversations Conversation[]
+  messages      Message[]
+  flows         Flow[]
+  questions     FlowQuestion[]
+  answers       CustomerAnswer[]
+  links         Link[]
+  events        AnalyticsEvent[]
+  knowledgeBase KnowledgeBase?
+  suppressed    SuppressedNumber[]
+  broadcasts    BroadcastJob[]
+  outboundSends OutboundSend[]
+
+  @@index([status])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Auth
+// ─────────────────────────────────────────────────────────────
+// A super_admin (platform owner) has role='super_admin' and tenantId=null and
+// can manage all tenants. A tenant admin/agent has a tenantId and is scoped to
+// it. Email is globally unique (it's the login key).
+model AdminUser {
+  id           String   @id @default(cuid())
+  tenantId     String?
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         String   @default("admin") // super_admin | admin | agent
+  mustResetPassword Boolean @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Core domain
+// ─────────────────────────────────────────────────────────────
+model Customer {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String?
+  phone     String
+  email     String?
+  tags      Json     @default("[]")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant        Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+  answers       CustomerAnswer[]
+  events        AnalyticsEvent[]
+
+  // Same phone can belong to different tenants; unique only within a tenant.
+  @@unique([tenantId, phone])
+  @@index([tenantId])
+}
+
+model Conversation {
+  id                String   @id @default(cuid())
+  tenantId          String
+  customerId        String
+  whatsappPhone     String
+  status            String   @default("active") // active | completed | abandoned | needs_human
+  intent            String?
+  currentFlowId     String?
+  currentQuestionId String?
+  needsHuman        Boolean  @default(false)
+  lastMessage       String?
+  leadScore         Int      @default(0)
+  linkSent          Boolean  @default(false)
+  assignedTo        String?
+  tags              Json     @default("[]")
+  notes             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  lastActivityAt    DateTime @default(now())
+
+  tenant   Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  flow     Flow?            @relation(fields: [currentFlowId], references: [id])
+  messages Message[]
+  answers  CustomerAnswer[]
+  events   AnalyticsEvent[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, lastActivityAt])
+  @@index([customerId])
+}
+
+model Message {
+  id             String   @id @default(cuid())
+  tenantId       String
+  conversationId String
+  senderType     String // customer | agent | human
+  messageText    String
+  intent         String?
+  waMessageId    String? // Meta's message id — for inbound idempotency
+  rawPayload     Json?
+  createdAt      DateTime @default(now())
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, waMessageId])
+  @@index([conversationId])
+  @@index([tenantId, createdAt])
+}
+
+model Flow {
+  id               String   @id @default(cuid())
+  tenantId         String
+  name             String
+  description      String?
+  triggerWords     Json     @default("[]")
+  finalMessage     String?
+  sendFinalMessage Boolean  @default(true) // when false, no closing message is sent at flow end
+  linkId           String?
+  isActive         Boolean  @default(true)
+  isDefault        Boolean  @default(false) // start on ANY message (no trigger words needed)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  tenant        Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  questions     FlowQuestion[]
+  link          Link?            @relation("FlowLink", fields: [linkId], references: [id])
+  conversations Conversation[]
+  answers       CustomerAnswer[]
+  events        AnalyticsEvent[]
+  relatedLinks  Link[]           @relation("LinkRelatedFlow")
+
+  @@index([tenantId])
+}
+
+model FlowQuestion {
+  id           String   @id @default(cuid())
+  tenantId     String
+  flowId       String
+  questionText String
+  questionType String   @default("text") // text|phone|email|number|single_choice|multiple_choice|yes_no|date|custom
+  options      Json     @default("[]")
+  voiceUrl     String? // optional pre-recorded voice note (audio) sent when this question is asked
+  imageUrl     String? // optional image sent when this question is asked
+  isRequired   Boolean  @default(true)
+  orderIndex   Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tenant  Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  flow    Flow             @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  answers CustomerAnswer[]
+
+  @@index([flowId])
+  @@index([tenantId])
+}
+
+model CustomerAnswer {
+  id             String   @id @default(cuid())
+  tenantId       String
+  conversationId String
+  customerId     String
+  flowId         String?
+  questionId     String?
+  questionText   String?
+  answer         String
+  createdAt      DateTime @default(now())
+
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversation Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  customer     Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  flow         Flow?         @relation(fields: [flowId], references: [id])
+  question     FlowQuestion? @relation(fields: [questionId], references: [id])
+
+  @@index([conversationId])
+  @@index([tenantId])
+}
+
+model Link {
+  id            String   @id @default(cuid())
+  tenantId      String
+  name          String
+  url           String
+  description   String?
+  relatedFlowId String?
+  isActive      Boolean  @default(true)
+  trackClicks   Boolean  @default(true)
+  showOnBio     Boolean  @default(false) // show on the public /l link page
+  clicksCount   Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  relatedFlow Flow?  @relation("LinkRelatedFlow", fields: [relatedFlowId], references: [id])
+  flowsUsing  Flow[] @relation("FlowLink")
+
+  @@index([tenantId])
+}
+
+model AnalyticsEvent {
+  id             String   @id @default(cuid())
+  tenantId       String
+  eventName      String
+  conversationId String?
+  customerId     String?
+  customerPhone  String?
+  flowId         String?
+  questionId     String?
+  metadata       Json?
+  createdAt      DateTime @default(now())
+
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  customer     Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  flow         Flow?         @relation(fields: [flowId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, eventName])
+  @@index([tenantId, eventName, flowId])
+  @@index([tenantId, eventName, questionId])
+  @@index([tenantId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Broadcast guardrails
+// ─────────────────────────────────────────────────────────────
+
+// Numbers that must never receive broadcasts: opted out via keyword ("הסר"),
+// or manually suppressed. Phone is normalized (972…). Scoped per tenant.
+model SuppressedNumber {
+  id        String   @id @default(cuid())
+  tenantId  String
+  phone     String
+  reason    String   @default("opt_out") // opt_out | manual
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, phone])
+  @@index([tenantId])
+}
+
+// A broadcast campaign processed in the background. `cursor` points at the next
+// contact to process, so a job stopped by the daily cap / circuit breaker /
+// server restart resumes exactly where it left off.
+model BroadcastJob {
+  id                 String   @id @default(cuid())
+  tenantId           String
+  status             String   @default("running") // running | completed | stopped | quota_reached | aborted
+  abortReason        String?
+  mode               String   @default("template") // template | text
+  templateName       String?
+  languageCode       String?
+  message            String?
+  headerImageLink    String?
+  headerImageId      String?
+  requireHeaderImage Boolean  @default(false)
+  throttleMs         Int      @default(300)
+  contacts           Json // deduped [{ phone, vars, ... }] — the full work list
+  cursor             Int      @default(0)
+  total              Int
+  sent               Int      @default(0)
+  failedCount        Int      @default(0)
+  invalidCount       Int      @default(0)
+  suppressedCount    Int      @default(0)
+  duplicatesRemoved  Int      @default(0)
+  failures           Json     @default("[]") // capped sample of { phone, error }
+  invalid            Json     @default("[]") // capped sample of { phone, error }
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+}
+
+// Ledger of business-initiated sends — one row per delivered API call. Powers
+// the rolling-24h cap that keeps each tenant under Meta's messaging-tier limit.
+model OutboundSend {
+  id        String   @id @default(cuid())
+  tenantId  String
+  phone     String
+  jobId     String?
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+  @@index([jobId])
+}
+
+// Knowledge base — one record per tenant (the agent answers from it).
+model KnowledgeBase {
+  id                  String   @id @default(cuid())
+  tenantId            String   @unique
+  businessDescription String?
+  productInfo         String?
+  serviceInfo         String?
+  prices              String?
+  shippingInfo        String?
+  returnPolicy        String?
+  faq                 String?
+  openingHours        String?
+  contactDetails      String?
+  limitations         String?
+  customInstructions  String?
+  updatedAt           DateTime @updatedAt
+  createdAt           DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}

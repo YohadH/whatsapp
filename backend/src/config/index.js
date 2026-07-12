@@ -1,0 +1,119 @@
+import dotenv from 'dotenv';
+dotenv.config();
+
+const isProd = (process.env.NODE_ENV || 'development') === 'production';
+
+// Fail fast in production if security-critical secrets are missing or left at
+// their insecure dev defaults, rather than silently running exploitable.
+const DEV_JWT_SECRET = 'dev-insecure-secret-change-me';
+if (isProd) {
+  const problems = [];
+  if (!process.env.JWT_SECRET || process.env.JWT_SECRET === DEV_JWT_SECRET) {
+    problems.push('JWT_SECRET is missing or set to the insecure default');
+  }
+  if (!process.env.CREDENTIALS_ENC_KEY) {
+    problems.push('CREDENTIALS_ENC_KEY is missing (required to store tenant WhatsApp tokens)');
+  }
+  if (problems.length) {
+    throw new Error(`Refusing to boot in production:\n  - ${problems.join('\n  - ')}`);
+  }
+}
+
+const config = {
+  port: parseInt(process.env.PORT || '4000', 10),
+  env: process.env.NODE_ENV || 'development',
+  isProd,
+  publicBaseUrl: process.env.PUBLIC_BASE_URL || 'http://localhost:4000',
+  corsOrigins: (process.env.CORS_ORIGIN || 'http://localhost:5173')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
+
+  jwt: {
+    secret: process.env.JWT_SECRET || DEV_JWT_SECRET,
+    expiresIn: process.env.JWT_EXPIRES_IN || '7d',
+  },
+
+  // Key for encrypting per-tenant secrets (WhatsApp tokens) at rest.
+  credentials: {
+    encKey: process.env.CREDENTIALS_ENC_KEY || '',
+  },
+
+  openai: {
+    apiKey: process.env.OPENAI_API_KEY || '',
+    model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+    enabled: Boolean(process.env.OPENAI_API_KEY),
+  },
+
+  legal: {
+    appName: process.env.LEGAL_APP_NAME || 'WhatsApp Business AI Agent',
+    companyName: process.env.LEGAL_COMPANY_NAME || 'Your Company',
+    contactEmail: process.env.LEGAL_CONTACT_EMAIL || 'support@example.com',
+    websiteUrl: process.env.LEGAL_WEBSITE_URL || '',
+    effectiveDate: process.env.LEGAL_EFFECTIVE_DATE || '2026-06-09',
+  },
+
+  bio: {
+    // Public link page at /l — title/subtitle can be overridden via env.
+    title: process.env.BIO_TITLE || 'ישראל בידור',
+    subtitle: process.env.BIO_SUBTITLE || 'עקבו אחרינו 🎬',
+  },
+
+  supabase: {
+    url: process.env.SUPABASE_URL || '',
+    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
+    storageBucket: process.env.SUPABASE_STORAGE_BUCKET || 'voice-notes',
+    // When configured, uploads go to Supabase Storage (persists across Render
+    // deploys). Otherwise uploads fall back to local disk (dev convenience).
+    enabled: Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY),
+  },
+
+  // Meta app used for Embedded Signup (onboarding a customer's WABA in a few
+  // clicks). appSecret is the same Meta app secret used for webhook verification.
+  meta: {
+    appId: process.env.META_APP_ID || '',
+    appSecret: process.env.META_APP_SECRET || process.env.WHATSAPP_APP_SECRET || '',
+    configId: process.env.META_CONFIG_ID || '', // Embedded Signup configuration id
+    graphVersion: process.env.META_GRAPH_VERSION || process.env.WHATSAPP_API_VERSION || 'v21.0',
+  },
+
+  // Error tracking (no-op unless SENTRY_DSN is set).
+  sentry: {
+    dsn: process.env.SENTRY_DSN || '',
+    tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE || '0'),
+  },
+
+  // Per-tenant plan usage window (messagesThisPeriod resets after this many days).
+  usage: {
+    periodDays: parseInt(process.env.USAGE_PERIOD_DAYS || '30', 10),
+  },
+
+  broadcast: {
+    // Default rolling-24h send cap for a new tenant (per plan; overridable per
+    // tenant). Kept under a typical Meta messaging tier to leave room for
+    // agent-initiated sends and retries.
+    defaultDailyCap: parseInt(process.env.BROADCAST_DEFAULT_DAILY_CAP || '250', 10),
+    // Optional deployment-wide hard ceiling clamping every tenant's cap (0 = off).
+    platformMax: parseInt(process.env.BROADCAST_PLATFORM_MAX || '0', 10),
+    // Floor for the delay between sends; campaigns can run slower, not faster.
+    defaultThrottleMs: parseInt(process.env.BROADCAST_THROTTLE_MS || '300', 10),
+    // Abort a campaign after this many consecutive failures.
+    maxConsecutiveFailures: parseInt(process.env.BROADCAST_MAX_CONSECUTIVE_FAILURES || '15', 10),
+  },
+
+  whatsapp: {
+    // These env creds are the OPTIONAL "master" fallback (single-tenant mode /
+    // migration): the backfill copies them into the default tenant. In
+    // multi-tenant operation each tenant carries its own credentials in the DB.
+    token: process.env.WHATSAPP_TOKEN || '',
+    phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
+    businessAccountId: process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || '', // WABA ID — needed to list message templates
+    verifyToken: process.env.WHATSAPP_VERIFY_TOKEN || 'my-verify-token',
+    apiVersion: process.env.WHATSAPP_API_VERSION || 'v21.0',
+    // Meta app secret — used to verify inbound webhook signatures (X-Hub-Signature-256).
+    appSecret: process.env.WHATSAPP_APP_SECRET || '',
+    enabled: Boolean(process.env.WHATSAPP_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID),
+  },
+};
+
+export default config;
