@@ -1,0 +1,351 @@
+import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import api from '../api/client.js';
+import { useAuth } from '../context/AuthContext.jsx';
+import { PageHeader } from '../components/Layout.jsx';
+import { Spinner, Modal, EmptyState } from '../components/ui.jsx';
+import { launchEmbeddedSignup } from '../lib/fbEmbeddedSignup.js';
+
+const STATUS_BADGE = {
+  active: 'bg-green-100 text-green-700',
+  trial: 'bg-amber-100 text-amber-700',
+  suspended: 'bg-red-100 text-red-700',
+};
+
+const emptyForm = {
+  name: '', slug: '', plan: 'trial',
+  waPhoneNumberId: '', waBusinessAccountId: '', waToken: '', waVerifyToken: '',
+  bioTitle: '', bioSubtitle: '',
+  adminEmail: '', adminPassword: '',
+};
+
+export default function Tenants() {
+  const { setActiveTenant } = useAuth();
+  const navigate = useNavigate();
+  const [tenants, setTenants] = useState(null);
+  const [plans, setPlans] = useState({});
+  const [esConfig, setEsConfig] = useState({ configured: false });
+  const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState(null); // tenant id being edited
+
+  async function load() {
+    const [t, p, es] = await Promise.all([
+      api.get('/api/admin/tenants'),
+      api.get('/api/admin/plans'),
+      api.get('/api/admin/embedded-signup/config').catch(() => ({ data: { configured: false } })),
+    ]);
+    setTenants(t.data);
+    setPlans(p.data.plans || {});
+    setEsConfig(es.data);
+  }
+  useEffect(() => { load().catch(() => setTenants([])); }, []);
+
+  function actAs(t) {
+    setActiveTenant(t.id);
+    navigate('/');
+  }
+
+  if (!tenants) return <Spinner className="h-64" />;
+
+  return (
+    <div>
+      <PageHeader
+        title="עסקים (Tenants)"
+        subtitle="ניהול הלקוחות של הפלטפורמה — פרטי WhatsApp, תוכנית, ומשתמשים"
+        actions={<button className="btn-primary" onClick={() => setCreating(true)}>+ עסק חדש</button>}
+      />
+
+      {tenants.length === 0 ? (
+        <EmptyState>אין עדיין עסקים. צרו את הראשון עם "עסק חדש".</EmptyState>
+      ) : (
+        <div className="grid gap-3 md:grid-cols-2">
+          {tenants.map((t) => (
+            <div key={t.id} className="card space-y-2">
+              <div className="flex items-start justify-between">
+                <div>
+                  <div className="font-semibold text-lg">{t.name}</div>
+                  <div className="text-xs text-gray-400">/{t.slug} · {plans[t.plan]?.label || t.plan}</div>
+                </div>
+                <span className={`badge ${STATUS_BADGE[t.status] || 'bg-gray-100 text-gray-600'}`}>{t.status}</span>
+              </div>
+              <div className="flex flex-wrap gap-3 text-xs text-gray-500">
+                <span>👥 {t.counts?.customers ?? 0} לקוחות</span>
+                <span>💬 {t.counts?.conversations ?? 0} שיחות</span>
+                <span>🧑‍💼 {t.counts?.admins ?? 0} משתמשים</span>
+                <span className={t.waTokenConfigured ? 'text-green-600' : 'text-red-500'}>
+                  {t.waTokenConfigured ? '🔑 WhatsApp מחובר' : '⚠️ אין טוקן'}
+                </span>
+                {t.waPhoneNumberId && <span className="font-mono">📱 {t.waPhoneNumberId}</span>}
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button className="btn-ghost text-sm" onClick={() => actAs(t)}>כניסה לדאשבורד ←</button>
+                <button className="btn-ghost text-sm" onClick={() => setEditing(t.id)}>עריכה</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {creating && (
+        <CreateTenantModal plans={plans} onClose={() => setCreating(false)} onCreated={() => { setCreating(false); load(); }} />
+      )}
+      {editing && (
+        <EditTenantModal tenantId={editing} plans={plans} esConfig={esConfig} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />
+      )}
+    </div>
+  );
+}
+
+function Field({ label, hint, ...props }) {
+  return (
+    <div>
+      <label className="label">{label}</label>
+      <input className="input" {...props} />
+      {hint && <p className="text-xs text-gray-400 mt-1">{hint}</p>}
+    </div>
+  );
+}
+
+function CreateTenantModal({ plans, onClose, onCreated }) {
+  const [form, setForm] = useState(emptyForm);
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  async function submit(e) {
+    e.preventDefault();
+    setError(''); setSaving(true);
+    try {
+      const body = {
+        name: form.name, slug: form.slug || undefined, plan: form.plan,
+        waPhoneNumberId: form.waPhoneNumberId || undefined,
+        waBusinessAccountId: form.waBusinessAccountId || undefined,
+        waToken: form.waToken || undefined,
+        waVerifyToken: form.waVerifyToken || undefined,
+        bioTitle: form.bioTitle || undefined,
+        bioSubtitle: form.bioSubtitle || undefined,
+      };
+      if (form.adminEmail && form.adminPassword) {
+        body.admin = { email: form.adminEmail, password: form.adminPassword };
+      }
+      await api.post('/api/admin/tenants', body);
+      onCreated();
+    } catch (err) {
+      setError(err.response?.data?.error || 'יצירת העסק נכשלה');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal open title="עסק חדש" onClose={onClose} wide>
+      <form onSubmit={submit} className="space-y-4">
+        <div className="grid gap-3 md:grid-cols-2">
+          <Field label="שם העסק" value={form.name} onChange={set('name')} required />
+          <Field label="מזהה URL (slug)" value={form.slug} onChange={set('slug')} placeholder="acme" hint="לעמוד הקישורים הציבורי /l/slug" />
+        </div>
+        <div>
+          <label className="label">תוכנית</label>
+          <select className="input" value={form.plan} onChange={set('plan')}>
+            {Object.entries(plans).map(([k, p]) => (
+              <option key={k} value={k}>{p.label} — {p.dailyBroadcastCap.toLocaleString()} ליום</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="border-t pt-3">
+          <div className="font-medium text-sm mb-2">פרטי WhatsApp (אפשר להשלים אחר כך)</div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <Field label="Phone Number ID" value={form.waPhoneNumberId} onChange={set('waPhoneNumberId')} hint="מזהה המספר שאליו מגיע ה-webhook" />
+            <Field label="WABA ID" value={form.waBusinessAccountId} onChange={set('waBusinessAccountId')} hint="נדרש לרשימת התבניות" />
+            <Field label="Access Token" type="password" value={form.waToken} onChange={set('waToken')} hint="נשמר מוצפן" />
+            <Field label="Verify Token" value={form.waVerifyToken} onChange={set('waVerifyToken')} hint="אם לעסק אפליקציית Meta משלו" />
+          </div>
+        </div>
+
+        <div className="border-t pt-3">
+          <div className="font-medium text-sm mb-2">משתמש מנהל ראשון (אופציונלי)</div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <Field label="אימייל" type="email" value={form.adminEmail} onChange={set('adminEmail')} />
+            <Field label="סיסמה זמנית" value={form.adminPassword} onChange={set('adminPassword')} hint="המשתמש יתבקש להחליף בכניסה" />
+          </div>
+        </div>
+
+        {error && <div className="text-sm text-red-600 bg-red-50 rounded-lg p-2">{error}</div>}
+        <div className="flex gap-2 justify-end">
+          <button type="button" className="btn-ghost" onClick={onClose}>ביטול</button>
+          <button className="btn-primary" disabled={saving || !form.name}>{saving ? 'יוצר…' : 'יצירת עסק'}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function EditTenantModal({ tenantId, plans, esConfig, onClose, onSaved }) {
+  const [tenant, setTenant] = useState(null);
+  const [admins, setAdmins] = useState([]);
+  const [form, setForm] = useState({});
+  const [newToken, setNewToken] = useState('');
+  const [verify, setVerify] = useState(null);
+  const [newAdmin, setNewAdmin] = useState({ email: '', password: '' });
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  async function connectEmbeddedSignup() {
+    setError(''); setConnecting(true);
+    try {
+      const { code, phoneNumberId, wabaId } = await launchEmbeddedSignup(esConfig);
+      const r = await api.post(`/api/admin/tenants/${tenantId}/connect-whatsapp`, { code, phoneNumberId, wabaId });
+      setTenant(r.data.tenant);
+      setForm((f) => ({ ...f, waPhoneNumberId: r.data.tenant.waPhoneNumberId || '', waBusinessAccountId: r.data.tenant.waBusinessAccountId || '' }));
+      setVerify(null);
+    } catch (err) {
+      setError(err.response?.data?.error || err.message || 'החיבור נכשל');
+    } finally {
+      setConnecting(false);
+    }
+  }
+
+  useEffect(() => {
+    Promise.all([api.get(`/api/admin/tenants/${tenantId}`), api.get(`/api/admin/tenants/${tenantId}/admins`)])
+      .then(([t, a]) => {
+        setTenant(t.data);
+        setForm({
+          name: t.data.name, slug: t.data.slug, plan: t.data.plan, status: t.data.status,
+          waPhoneNumberId: t.data.waPhoneNumberId || '', waBusinessAccountId: t.data.waBusinessAccountId || '',
+          waVerifyToken: t.data.waVerifyToken || '', bioTitle: t.data.bioTitle || '', bioSubtitle: t.data.bioSubtitle || '',
+          dailyBroadcastCap: t.data.dailyBroadcastCap,
+        });
+        setAdmins(a.data);
+      })
+      .catch(() => setError('טעינת העסק נכשלה'));
+  }, [tenantId]);
+
+  async function save(e) {
+    e.preventDefault();
+    setError(''); setSaving(true);
+    try {
+      const body = { ...form };
+      if (newToken) body.waToken = newToken;
+      await api.put(`/api/admin/tenants/${tenantId}`, body);
+      onSaved();
+    } catch (err) {
+      setError(err.response?.data?.error || 'השמירה נכשלה');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function verifyCreds() {
+    setVerify({ loading: true });
+    try {
+      const r = await api.post(`/api/admin/tenants/${tenantId}/verify-credentials`);
+      setVerify(r.data);
+    } catch (err) {
+      setVerify({ error: err.response?.data?.error || 'הבדיקה נכשלה' });
+    }
+  }
+
+  async function addAdmin(e) {
+    e.preventDefault();
+    try {
+      const r = await api.post(`/api/admin/tenants/${tenantId}/admins`, newAdmin);
+      setAdmins((a) => [...a, r.data]);
+      setNewAdmin({ email: '', password: '' });
+    } catch (err) {
+      setError(err.response?.data?.error || 'הוספת המשתמש נכשלה');
+    }
+  }
+
+  if (!tenant) return <Modal open title="עריכת עסק" onClose={onClose}><Spinner /></Modal>;
+
+  return (
+    <Modal open title={`עריכה — ${tenant.name}`} onClose={onClose} wide>
+      <form onSubmit={save} className="space-y-4">
+        <div className="grid gap-3 md:grid-cols-2">
+          <Field label="שם העסק" value={form.name} onChange={set('name')} />
+          <Field label="slug" value={form.slug} onChange={set('slug')} />
+          <div>
+            <label className="label">תוכנית</label>
+            <select className="input" value={form.plan} onChange={set('plan')}>
+              {Object.entries(plans).map(([k, p]) => <option key={k} value={k}>{p.label}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="label">סטטוס</label>
+            <select className="input" value={form.status} onChange={set('status')}>
+              <option value="active">פעיל</option>
+              <option value="trial">ניסיון</option>
+              <option value="suspended">מושהה</option>
+            </select>
+          </div>
+          <Field label="מכסת שליחה יומית" type="number" value={form.dailyBroadcastCap} onChange={set('dailyBroadcastCap')} hint="נקבע ע״י התוכנית; ניתן לעקוף" />
+        </div>
+
+        <div className="border-t pt-3">
+          <div className="flex items-center justify-between mb-2">
+            <div className="font-medium text-sm">פרטי WhatsApp</div>
+            <button type="button" className="btn-ghost text-sm" onClick={verifyCreds}>בדיקת טוקן</button>
+          </div>
+          {esConfig?.configured && (
+            <div className="mb-3 rounded-lg bg-brand-50 p-3 flex items-center justify-between gap-3">
+              <div className="text-xs text-gray-600">
+                חיבור בלחיצה אחת: הלקוח מחבר את חשבון ה-WhatsApp שלו דרך Meta (Embedded Signup) — הטוקן נשמר אוטומטית ומוצפן.
+              </div>
+              <button type="button" className="btn-primary text-sm whitespace-nowrap" disabled={connecting} onClick={connectEmbeddedSignup}>
+                {connecting ? 'מחבר…' : '🔗 חיבור WhatsApp'}
+              </button>
+            </div>
+          )}
+          {verify && (
+            <div className={`text-xs rounded p-2 mb-2 ${verify.valid ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
+              {verify.loading ? 'בודק…' : verify.error ? verify.error
+                : verify.valid ? `תקין ✓ ${verify.neverExpires ? '(לא פג)' : verify.expiresIso ? 'פג ' + verify.expiresIso.slice(0, 10) : ''}`
+                : `לא תקין: ${verify.error || 'טוקן לא קונפג'}`}
+            </div>
+          )}
+          <div className="grid gap-3 md:grid-cols-2">
+            <Field label="Phone Number ID" value={form.waPhoneNumberId} onChange={set('waPhoneNumberId')} />
+            <Field label="WABA ID" value={form.waBusinessAccountId} onChange={set('waBusinessAccountId')} />
+            <Field label="Access Token חדש" type="password" value={newToken} onChange={(e) => setNewToken(e.target.value)}
+              hint={tenant.waTokenConfigured ? 'טוקן קיים מוגדר — מלאו רק כדי להחליף' : 'אין טוקן — הזינו כדי לחבר'} />
+            <Field label="Verify Token" value={form.waVerifyToken} onChange={set('waVerifyToken')} />
+          </div>
+        </div>
+
+        <div className="border-t pt-3">
+          <div className="font-medium text-sm mb-2">מיתוג עמוד הקישורים (/l/{tenant.slug})</div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <Field label="כותרת" value={form.bioTitle} onChange={set('bioTitle')} />
+            <Field label="כותרת משנה" value={form.bioSubtitle} onChange={set('bioSubtitle')} />
+          </div>
+        </div>
+
+        {error && <div className="text-sm text-red-600 bg-red-50 rounded-lg p-2">{error}</div>}
+        <div className="flex gap-2 justify-end">
+          <button type="button" className="btn-ghost" onClick={onClose}>סגירה</button>
+          <button className="btn-primary" disabled={saving}>{saving ? 'שומר…' : 'שמירה'}</button>
+        </div>
+      </form>
+
+      <div className="border-t mt-5 pt-4">
+        <div className="font-medium text-sm mb-2">משתמשים ({admins.length})</div>
+        <div className="space-y-1 mb-3">
+          {admins.map((a) => (
+            <div key={a.id} className="flex items-center justify-between text-sm bg-gray-50 rounded px-3 py-1.5">
+              <span>{a.name} · <span className="text-gray-500">{a.email}</span></span>
+              <span className="text-xs text-gray-400">{a.role}{a.mustResetPassword ? ' · ממתין לאיפוס' : ''}</span>
+            </div>
+          ))}
+        </div>
+        <form onSubmit={addAdmin} className="flex gap-2 items-end">
+          <div className="flex-1"><label className="label">אימייל</label><input className="input" type="email" value={newAdmin.email} onChange={(e) => setNewAdmin((n) => ({ ...n, email: e.target.value }))} required /></div>
+          <div className="flex-1"><label className="label">סיסמה זמנית</label><input className="input" value={newAdmin.password} onChange={(e) => setNewAdmin((n) => ({ ...n, password: e.target.value }))} required /></div>
+          <button className="btn-ghost">+ הוספה</button>
+        </form>
+      </div>
+    </Modal>
+  );
+}
