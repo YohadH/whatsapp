@@ -33,6 +33,11 @@ router.post(
     const { name, url, description, relatedFlowId, isActive, trackClicks, showOnBio } = req.body || {};
     if (!name || !url) return res.status(400).json({ error: 'name and url are required' });
     if (!isSafeUrl(url)) return res.status(400).json({ error: 'URL must start with http:// or https://' });
+    // Tenant-ownership guard: a link may only relate to a Flow owned by the same tenant.
+    if (relatedFlowId) {
+      const flow = await prisma.flow.findFirst({ where: { id: relatedFlowId, tenantId: req.tenantId }, select: { id: true } });
+      if (!flow) return res.status(404).json({ error: 'Flow not found' });
+    }
     const link = await prisma.link.create({
       data: {
         tenantId: req.tenantId,
@@ -56,6 +61,11 @@ router.put(
     if (url !== undefined && !isSafeUrl(url)) return res.status(400).json({ error: 'URL must start with http:// or https://' });
     const owned = await prisma.link.findFirst({ where: { id: req.params.id, tenantId: req.tenantId }, select: { id: true } });
     if (!owned) return res.status(404).json({ error: 'Link not found' });
+    // Tenant-ownership guard on the referenced Flow (only when a non-null relatedFlowId is being set).
+    if (relatedFlowId) {
+      const flow = await prisma.flow.findFirst({ where: { id: relatedFlowId, tenantId: req.tenantId }, select: { id: true } });
+      if (!flow) return res.status(404).json({ error: 'Flow not found' });
+    }
     const data = {};
     if (name !== undefined) data.name = name;
     if (url !== undefined) data.url = url;

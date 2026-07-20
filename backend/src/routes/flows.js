@@ -26,6 +26,12 @@ router.post(
   asyncHandler(async (req, res) => {
     const { name, description, triggerWords, finalMessage, sendFinalMessage, linkId, isActive, isDefault, questions } = req.body || {};
     if (!name) return res.status(400).json({ error: 'name is required' });
+    // Tenant-ownership guard: a flow may only reference a Link owned by the same tenant,
+    // else the outbound message would leak another tenant's URL and skew their analytics.
+    if (linkId) {
+      const link = await prisma.link.findFirst({ where: { id: linkId, tenantId: req.tenantId }, select: { id: true } });
+      if (!link) return res.status(404).json({ error: 'Link not found' });
+    }
     const flow = await prisma.flow.create({
       data: {
         tenantId: req.tenantId,
@@ -73,6 +79,11 @@ router.put(
     const { name, description, triggerWords, finalMessage, sendFinalMessage, linkId, isActive, isDefault } = req.body || {};
     const owned = await prisma.flow.findFirst({ where: { id: req.params.id, tenantId: req.tenantId }, select: { id: true } });
     if (!owned) return res.status(404).json({ error: 'Flow not found' });
+    // Tenant-ownership guard on the referenced Link (only when a non-null linkId is being set).
+    if (linkId) {
+      const link = await prisma.link.findFirst({ where: { id: linkId, tenantId: req.tenantId }, select: { id: true } });
+      if (!link) return res.status(404).json({ error: 'Link not found' });
+    }
     const data = {};
     if (name !== undefined) data.name = name;
     if (description !== undefined) data.description = description;
