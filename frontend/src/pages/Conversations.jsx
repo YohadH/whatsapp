@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import api from '../api/client.js';
 import { PageHeader } from '../components/Layout.jsx';
-import { Spinner, StatusBadge, EmptyState, INTENT_LABELS } from '../components/ui.jsx';
+import { Spinner, StatusBadge, EmptyState, ErrorState, errMsg, INTENT_LABELS } from '../components/ui.jsx';
 
 const STATUS_OPTIONS = [
   { value: '', label: 'הכל' },
@@ -16,6 +16,7 @@ export default function Conversations() {
   const [params, setParams] = useSearchParams();
   const [data, setData] = useState({ items: [], total: 0 });
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [search, setSearch] = useState(params.get('search') || '');
 
   const status = params.get('status') || '';
@@ -23,6 +24,7 @@ export default function Conversations() {
 
   function load() {
     setLoading(true);
+    setError('');
     const q = new URLSearchParams();
     if (status) q.set('status', status);
     if (needsHuman) q.set('needsHuman', needsHuman);
@@ -30,6 +32,7 @@ export default function Conversations() {
     api
       .get(`/api/conversations?${q.toString()}`)
       .then((res) => setData(res.data))
+      .catch((err) => setError(errMsg(err)))
       .finally(() => setLoading(false));
   }
 
@@ -76,6 +79,8 @@ export default function Conversations() {
 
       {loading ? (
         <Spinner />
+      ) : error ? (
+        <ErrorState message={error} onRetry={load} />
       ) : data.items.length === 0 ? (
         <EmptyState>אין שיחות להצגה</EmptyState>
       ) : (

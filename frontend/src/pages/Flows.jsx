@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client.js';
 import { PageHeader } from '../components/Layout.jsx';
-import { Spinner, Modal, EmptyState } from '../components/ui.jsx';
+import { Spinner, Modal, EmptyState, ErrorState, errMsg } from '../components/ui.jsx';
 
 const QUESTION_TYPES = [
   { value: 'text', label: 'טקסט' },
@@ -29,15 +29,18 @@ export default function Flows() {
   const [flows, setFlows] = useState([]);
   const [links, setLinks] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [editing, setEditing] = useState(null);
 
   function load() {
     setLoading(true);
+    setError('');
     Promise.all([api.get('/api/flows'), api.get('/api/links')])
       .then(([f, l]) => {
         setFlows(f.data);
         setLinks(l.data);
       })
+      .catch((err) => setError(errMsg(err)))
       .finally(() => setLoading(false));
   }
   useEffect(() => { load(); }, []);
@@ -62,6 +65,8 @@ export default function Flows() {
 
       {loading ? (
         <Spinner />
+      ) : error ? (
+        <ErrorState message={error} onRetry={load} />
       ) : flows.length === 0 ? (
         <EmptyState>עדיין אין תהליכים. צרו את הראשון!</EmptyState>
       ) : (

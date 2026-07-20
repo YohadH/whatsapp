@@ -1,20 +1,23 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../api/client.js';
-import { Spinner, StatusBadge, INTENT_LABELS } from '../components/ui.jsx';
+import { Spinner, StatusBadge, ErrorState, errMsg, INTENT_LABELS } from '../components/ui.jsx';
 
 export default function ConversationDetail() {
   const { id } = useParams();
   const [conv, setConv] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
 
   function load() {
+    setLoading(true);
+    setError('');
     api.get(`/api/conversations/${id}`).then((res) => {
       setConv(res.data);
       setNote(res.data.notes || '');
-    }).finally(() => setLoading(false));
+    }).catch((err) => setError(errMsg(err, 'טעינת השיחה נכשלה'))).finally(() => setLoading(false));
   }
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [id]);
 
@@ -42,6 +45,7 @@ export default function ConversationDetail() {
   }
 
   if (loading) return <Spinner />;
+  if (error) return <ErrorState message={error} onRetry={load} />;
   if (!conv) return <div>שיחה לא נמצאה</div>;
 
   return (

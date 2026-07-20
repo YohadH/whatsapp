@@ -37,6 +37,27 @@ export function EmptyState({ children }) {
   return <div className="card text-center text-gray-400 py-10">{children}</div>;
 }
 
+// Pull a human-readable message out of an axios error (API `error` field first,
+// then the network/JS message, then a Hebrew fallback).
+export function errMsg(err, fallback = 'אירעה שגיאה בטעינת הנתונים') {
+  return err?.response?.data?.error || err?.message || fallback;
+}
+
+// Shown in place of a page's content when a data fetch fails, so a failed API
+// call surfaces a readable message (and an optional retry) instead of a blank
+// screen or "undefined" values.
+export function ErrorState({ message, onRetry }) {
+  return (
+    <div className="card text-center py-10">
+      <div className="text-red-600 font-medium mb-1">שגיאה</div>
+      <div className="text-sm text-gray-500 mb-4">{message || 'אירעה שגיאה בטעינת הנתונים'}</div>
+      {onRetry && (
+        <button className="btn-ghost" onClick={onRetry}>נסו שוב</button>
+      )}
+    </div>
+  );
+}
+
 export function Modal({ open, onClose, title, children, wide }) {
   if (!open) return null;
   return (

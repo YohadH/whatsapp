@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client.js';
 import { PageHeader } from '../components/Layout.jsx';
-import { Spinner, Modal, EmptyState } from '../components/ui.jsx';
+import { Spinner, Modal, EmptyState, ErrorState, errMsg } from '../components/ui.jsx';
 
 const empty = () => ({ name: '', url: '', description: '', relatedFlowId: '', isActive: true, trackClicks: true, showOnBio: false });
 
@@ -9,15 +9,18 @@ export default function Links() {
   const [links, setLinks] = useState([]);
   const [flows, setFlows] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [editing, setEditing] = useState(null);
 
   function load() {
     setLoading(true);
+    setError('');
     Promise.all([api.get('/api/links'), api.get('/api/flows')])
       .then(([l, f]) => {
         setLinks(l.data);
         setFlows(f.data);
       })
+      .catch((err) => setError(errMsg(err)))
       .finally(() => setLoading(false));
   }
   useEffect(() => { load(); }, []);
@@ -43,6 +46,8 @@ export default function Links() {
 
       {loading ? (
         <Spinner />
+      ) : error ? (
+        <ErrorState message={error} onRetry={load} />
       ) : links.length === 0 ? (
         <EmptyState>אין קישורים עדיין</EmptyState>
       ) : (

@@ -5,7 +5,7 @@ import {
 } from 'recharts';
 import api from '../api/client.js';
 import { PageHeader } from '../components/Layout.jsx';
-import { Spinner, INTENT_LABELS } from '../components/ui.jsx';
+import { Spinner, ErrorState, errMsg, INTENT_LABELS } from '../components/ui.jsx';
 
 const COLORS = ['#10b981', '#6366f1', '#f59e0b', '#ef4444', '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6'];
 
@@ -21,8 +21,11 @@ function Panel({ title, children }) {
 export default function Analytics() {
   const [d, setD] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  useEffect(() => {
+  function load() {
+    setLoading(true);
+    setError('');
     Promise.all([
       api.get('/api/analytics/conversations?days=30'),
       api.get('/api/analytics/flows'),
@@ -33,10 +36,14 @@ export default function Analytics() {
       .then(([conv, flows, links, questions, funnel]) =>
         setD({ conv: conv.data, flows: flows.data, links: links.data, questions: questions.data, funnel: funnel.data })
       )
+      .catch((err) => setError(errMsg(err)))
       .finally(() => setLoading(false));
-  }, []);
+  }
+
+  useEffect(() => { load(); }, []);
 
   if (loading) return <Spinner />;
+  if (error) return <ErrorState message={error} onRetry={load} />;
   if (!d) return null;
 
   const intentData = d.questions.customersByIntent.map((i) => ({ name: INTENT_LABELS[i.intent] || i.intent, value: i.count }));

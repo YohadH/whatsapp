@@ -3,23 +3,30 @@ import { Link } from 'react-router-dom';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import api from '../api/client.js';
 import { PageHeader } from '../components/Layout.jsx';
-import { StatCard, Spinner } from '../components/ui.jsx';
+import { StatCard, Spinner, ErrorState, errMsg } from '../components/ui.jsx';
 
 export default function Dashboard() {
   const [overview, setOverview] = useState(null);
   const [series, setSeries] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  useEffect(() => {
+  function load() {
+    setLoading(true);
+    setError('');
     Promise.all([api.get('/api/analytics/overview'), api.get('/api/analytics/conversations?days=14')])
       .then(([o, c]) => {
         setOverview(o.data);
         setSeries(c.data.series);
       })
+      .catch((err) => setError(errMsg(err)))
       .finally(() => setLoading(false));
-  }, []);
+  }
+
+  useEffect(() => { load(); }, []);
 
   if (loading) return <Spinner />;
+  if (error) return <ErrorState message={error} onRetry={load} />;
   const o = overview || {};
 
   const fmtTime = (s) => (s >= 60 ? `${Math.round(s / 60)} ד׳` : `${s} ש׳`);

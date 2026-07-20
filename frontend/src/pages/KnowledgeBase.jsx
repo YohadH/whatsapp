@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client.js';
 import { PageHeader } from '../components/Layout.jsx';
-import { Spinner } from '../components/ui.jsx';
+import { Spinner, ErrorState, errMsg } from '../components/ui.jsx';
 
 const FIELDS = [
   { key: 'businessDescription', label: 'תיאור העסק', rows: 3 },
@@ -22,23 +22,39 @@ export default function KnowledgeBase() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [error, setError] = useState('');
+  const [saveError, setSaveError] = useState('');
 
-  useEffect(() => {
-    api.get('/api/knowledge-base').then((res) => setKb(res.data)).finally(() => setLoading(false));
-  }, []);
+  function load() {
+    setLoading(true);
+    setError('');
+    api.get('/api/knowledge-base')
+      .then((res) => setKb(res.data))
+      .catch((err) => setError(errMsg(err)))
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(() => { load(); }, []);
 
   async function save() {
     setSaving(true);
     setSaved(false);
+    setSaveError('');
     const payload = Object.fromEntries(FIELDS.map((f) => [f.key, kb[f.key] || '']));
-    const res = await api.put('/api/knowledge-base', payload);
-    setKb(res.data);
-    setSaving(false);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
+    try {
+      const res = await api.put('/api/knowledge-base', payload);
+      setKb(res.data);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (err) {
+      setSaveError(errMsg(err, 'שמירת מאגר הידע נכשלה'));
+    } finally {
+      setSaving(false);
+    }
   }
 
   if (loading) return <Spinner />;
+  if (error || !kb) return <ErrorState message={error} onRetry={load} />;
 
   return (
     <div>
@@ -51,6 +67,7 @@ export default function KnowledgeBase() {
           </button>
         }
       />
+      {saveError && <div className="card bg-red-50 text-red-600 text-sm mb-4">{saveError}</div>}
       <div className="grid md:grid-cols-2 gap-4">
         {FIELDS.map((f) => (
           <div key={f.key} className="card">

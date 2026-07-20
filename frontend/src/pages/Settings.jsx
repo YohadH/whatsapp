@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import api from '../api/client.js';
 import { PageHeader } from '../components/Layout.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
+import { launchEmbeddedSignup } from '../lib/fbEmbeddedSignup.js';
 
 export default function Settings() {
   const { user } = useAuth();
@@ -38,7 +39,106 @@ export default function Settings() {
         </div>
       </div>
 
+      <WhatsAppConnect />
       <Simulator />
+    </div>
+  );
+}
+
+// Lets a tenant admin connect their own WhatsApp number via Meta Embedded Signup.
+// The one-click flow needs the Meta app to be configured server-side (META_APP_ID
+// + META_CONFIG_ID); until then we tell the user to contact support to connect.
+function WhatsAppConnect() {
+  const [state, setState] = useState(null); // { connected, phoneNumberId, embeddedSignup }
+  const [loading, setLoading] = useState(true);
+  const [connecting, setConnecting] = useState(false);
+  const [error, setError] = useState('');
+  const [verify, setVerify] = useState(null);
+
+  function load() {
+    setLoading(true);
+    api.get('/api/settings/whatsapp')
+      .then((r) => setState(r.data))
+      .catch((err) => setError(err.response?.data?.error || 'טעינת סטטוס ה-WhatsApp נכשלה'))
+      .finally(() => setLoading(false));
+  }
+  useEffect(() => { load(); }, []);
+
+  async function connect() {
+    setError(''); setConnecting(true);
+    try {
+      const es = state?.embeddedSignup;
+      const { code, phoneNumberId, wabaId } = await launchEmbeddedSignup(es);
+      await api.post('/api/settings/connect-whatsapp', { code, phoneNumberId, wabaId });
+      setVerify(null);
+      load();
+    } catch (err) {
+      setError(err.response?.data?.error || err.message || 'החיבור נכשל');
+    } finally {
+      setConnecting(false);
+    }
+  }
+
+  async function runVerify() {
+    setVerify({ loading: true });
+    try {
+      const r = await api.post('/api/settings/whatsapp/verify');
+      setVerify(r.data);
+    } catch (err) {
+      setVerify({ error: err.response?.data?.error || 'הבדיקה נכשלה' });
+    }
+  }
+
+  const configured = state?.embeddedSignup?.configured;
+
+  return (
+    <div className="card mt-4">
+      <div className="flex items-center justify-between mb-1">
+        <h3 className="font-semibold">📱 חיבור מספר WhatsApp</h3>
+        {state?.connected && (
+          <button className="btn-ghost text-sm" onClick={runVerify}>בדיקת חיבור</button>
+        )}
+      </div>
+      <p className="text-sm text-gray-500 mb-3">
+        חברו את חשבון ה-WhatsApp Business שלכם כדי שהסוכן יענה ללקוחות אמיתיים. החיבור מתבצע דרך Meta והטוקן נשמר מוצפן.
+      </p>
+
+      {loading ? (
+        <div className="text-sm text-gray-400">טוען…</div>
+      ) : (
+        <>
+          {state?.connected ? (
+            <div className="rounded-lg bg-green-50 text-green-700 text-sm p-3 mb-3">
+              ● מחובר — מספר: <span className="font-mono">{state.phoneNumberId}</span>
+            </div>
+          ) : (
+            <div className="rounded-lg bg-gray-50 text-gray-600 text-sm p-3 mb-3">
+              ○ עדיין לא מחובר — הסוכן פועל כרגע במצב סימולטור בלבד.
+            </div>
+          )}
+
+          {error && <div className="rounded-lg bg-red-50 text-red-600 text-sm p-3 mb-3">{error}</div>}
+
+          {verify && (
+            <div className={`text-xs rounded p-2 mb-3 ${verify.valid ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
+              {verify.loading ? 'בודק…' : verify.error ? verify.error
+                : verify.valid ? `הטוקן תקין ✓ ${verify.neverExpires ? '(לא פג)' : verify.expiresIso ? 'פג ' + verify.expiresIso.slice(0, 10) : ''}`
+                : 'הטוקן אינו תקין'}
+            </div>
+          )}
+
+          {configured ? (
+            <button className="btn-primary" disabled={connecting} onClick={connect}>
+              {connecting ? 'מחבר…' : state?.connected ? '🔗 חיבור מספר אחר' : '🔗 חיבור WhatsApp'}
+            </button>
+          ) : (
+            <div className="text-xs text-gray-400">
+              החיבור בלחיצה אחת אינו זמין עדיין — יש להגדיר את אפליקציית ה-Meta בשרת
+              (<code>META_APP_ID</code> ו-<code>META_CONFIG_ID</code>). עד אז פנו לתמיכה לחיבור המספר.
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
