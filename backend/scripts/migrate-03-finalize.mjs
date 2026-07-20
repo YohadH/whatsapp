@@ -39,6 +39,24 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BACKUP_DIR = path.resolve(__dirname, '..', 'backups');
 
+// Stale-backup guard: a `.dump` from days ago is NOT a valid safety net for an
+// irreversible migration — the DB will have drifted since. Reject any dump older
+// than this. Override with MIGRATION_MAX_BACKUP_AGE_HOURS if a longer window is
+// genuinely intended (must be a positive number).
+const MAX_BACKUP_AGE_HOURS = (() => {
+  const raw = process.env.MIGRATION_MAX_BACKUP_AGE_HOURS;
+  const n = raw != null ? Number(raw) : 12;
+  return Number.isFinite(n) && n > 0 ? n : 12;
+})();
+const MAX_BACKUP_AGE_MS = MAX_BACKUP_AGE_HOURS * 3600 * 1000;
+
+// Transaction / lock timeouts (ms) so DDL against live Supabase can never hang
+// indefinitely waiting on a lock, and the whole batch has a hard ceiling.
+const TXN_TIMEOUT_MS = Number(process.env.MIGRATION_TXN_TIMEOUT_MS) || 120000; // 2 min hard cap on the txn
+const TXN_MAX_WAIT_MS = Number(process.env.MIGRATION_TXN_MAX_WAIT_MS) || 10000; // wait to acquire a txn slot
+const LOCK_TIMEOUT_MS = Number(process.env.MIGRATION_LOCK_TIMEOUT_MS) || 15000; // fail if a table lock isn't grabbed
+const STMT_TIMEOUT_MS = Number(process.env.MIGRATION_STMT_TIMEOUT_MS) || 110000; // per-statement ceiling (< txn)
+
 // Tables to SET NOT NULL — must match backfill-tenants.mjs minus the by-design nullable AdminUser.
 const NOT_NULL_TABLES = [
   'Customer', 'Conversation', 'Message', 'Flow', 'FlowQuestion', 'CustomerAnswer',
@@ -64,6 +82,10 @@ function buildStatements() {
 
 const LIVE = process.argv.includes('--live');
 const BACKUP_CONFIRMED = process.argv.includes('--backup-confirmed');
+// For the Supabase-Dashboard-backup path there is no local .dump to age-check,
+// so the operator must state WHEN that backup was taken so freshness is still
+// enforced: --backup-taken-at=2026-07-20T09:00:00Z (ISO 8601).
+const backupTakenAtArg = (process.argv.find((a) => a.startsWith('--backup-taken-at=')) || '').split('=')[1] || '';
 const directUrl = process.env.MIGRATION_DIRECT_URL || '';
 
 function usingPooler(url) {
@@ -73,12 +95,41 @@ function fail(msg) {
   console.error(`\n❌ FINALIZE ABORTED: ${msg}`);
   process.exit(1);
 }
-function backupPresent() {
+// Returns the FRESHEST local .dump, or null. A dump older than MAX_BACKUP_AGE_MS
+// is treated as absent — a stale backup is not a valid rollback net for an
+// irreversible migration (stale-backup guard).
+function freshestBackup() {
   try {
-    return fs.existsSync(BACKUP_DIR) && fs.readdirSync(BACKUP_DIR).some((f) => f.endsWith('.dump'));
+    if (!fs.existsSync(BACKUP_DIR)) return null;
+    const dumps = fs
+      .readdirSync(BACKUP_DIR)
+      .filter((f) => f.endsWith('.dump'))
+      .map((f) => {
+        const full = path.join(BACKUP_DIR, f);
+        return { file: f, mtimeMs: fs.statSync(full).mtimeMs };
+      })
+      .sort((a, b) => b.mtimeMs - a.mtimeMs);
+    return dumps[0] || null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+// { ok, reason, ageHours, file } — ok=true only if a .dump exists AND is fresh.
+function backupState() {
+  const newest = freshestBackup();
+  if (!newest) return { ok: false, reason: 'no .dump file present' };
+  const ageMs = Date.now() - newest.mtimeMs;
+  const ageHours = ageMs / 3600 / 1000;
+  if (ageMs > MAX_BACKUP_AGE_MS) {
+    return {
+      ok: false,
+      ageHours,
+      file: newest.file,
+      reason: `newest backup ${newest.file} is ${ageHours.toFixed(1)}h old (> ${MAX_BACKUP_AGE_HOURS}h max) — STALE`,
+    };
+  }
+  return { ok: true, ageHours, file: newest.file };
 }
 
 async function main() {
@@ -97,31 +148,71 @@ async function main() {
   // --- preconditions for a live run ---
   if (!directUrl) fail('MIGRATION_DIRECT_URL is not set. Refusing to run against the app DATABASE_URL.');
   if (usingPooler(directUrl)) fail('MIGRATION_DIRECT_URL is a pooler (6543) URL. DDL needs the DIRECT (5432) URL.');
-  if (!BACKUP_CONFIRMED && !backupPresent()) {
-    fail('no backup found in backend/backups/*.dump and --backup-confirmed not passed. ' +
-         'Take the preflight backup (migrate-01-backup.mjs --live, or the Supabase Dashboard) first.');
+
+  // Backup precondition — with a STALE-BACKUP guard (finding 3). A .dump must
+  // exist AND be fresh; an old dump is not a valid rollback net.
+  if (BACKUP_CONFIRMED) {
+    // Dashboard-backup path: no local .dump to age-check, so the operator must
+    // state when it was taken, and we age-check THAT.
+    if (!backupTakenAtArg) {
+      fail('--backup-confirmed requires --backup-taken-at=<ISO8601> so backup freshness can be verified ' +
+           `(must be within ${MAX_BACKUP_AGE_HOURS}h). Example: --backup-taken-at=2026-07-20T09:00:00Z`);
+    }
+    const takenMs = Date.parse(backupTakenAtArg);
+    if (Number.isNaN(takenMs)) fail(`--backup-taken-at is not a valid ISO 8601 timestamp: "${backupTakenAtArg}".`);
+    const ageMs = Date.now() - takenMs;
+    if (ageMs < 0) fail(`--backup-taken-at is in the future ("${backupTakenAtArg}"). Refusing.`);
+    if (ageMs > MAX_BACKUP_AGE_MS) {
+      fail(`confirmed backup is ${(ageMs / 3600000).toFixed(1)}h old (> ${MAX_BACKUP_AGE_HOURS}h max) — STALE. ` +
+           'Take a fresh backup before this irreversible step.');
+    }
+    console.log(`   ✓ backup precondition satisfied (--backup-confirmed, ${(ageMs / 3600000).toFixed(1)}h old)`);
+  } else {
+    const b = backupState();
+    if (!b.ok) {
+      fail(`backup precondition failed — ${b.reason}. Take a fresh preflight backup ` +
+           '(migrate-01-backup.mjs --live, or the Supabase Dashboard + --backup-confirmed --backup-taken-at=<ISO>).');
+    }
+    console.log(`   ✓ backup precondition satisfied (local ${b.file}, ${b.ageHours.toFixed(1)}h old — fresh)`);
   }
-  console.log(`   ✓ backup precondition satisfied (${BACKUP_CONFIRMED ? '--backup-confirmed' : 'local .dump present'})`);
 
   const prisma = new PrismaClient({ datasources: { db: { url: directUrl } }, log: ['error'] });
   try {
-    // 0-NULL gate, inline — DDL must not open if any gated table still has NULLs.
-    const offenders = [];
-    for (const t of GATED_FOR_NULLS) {
-      const rows = await prisma.$queryRawUnsafe(`SELECT COUNT(*)::int AS n FROM "${t}" WHERE "tenantId" IS NULL`);
-      const n = rows?.[0]?.n ?? 0;
-      if (n > 0) offenders.push(`${t} (${n})`);
-    }
-    if (offenders.length > 0) {
-      await prisma.$disconnect();
-      fail(`0-NULL gate FAILED — still-NULL tables: ${offenders.join(', ')}. Re-run step 2.`);
-    }
-    console.log('   ✓ 0-NULL gate passed for all gated tables');
-
-    // The whole DDL as one transaction: any failure rolls everything back.
-    console.log('   → opening transaction and applying DDL…');
+    // TOCTOU FIX (finding 4): the 0-NULL check and the SET NOT NULL DDL must be
+    // ONE atomic unit. If we counted NULLs, then ran the DDL in a separate step,
+    // the live app (still serving traffic) could INSERT a NULL-tenantId row in
+    // the gap — the count would be stale and the DDL could fail mid-way. So the
+    // gate runs INSIDE the same interactive transaction, immediately before the
+    // DDL. Within the txn we first set lock_timeout + statement_timeout (finding
+    // 2): the SET NOT NULL takes an ACCESS EXCLUSIVE lock, so any concurrent
+    // writer is either blocked behind our lock (its NULL insert can't sneak in
+    // before validation) or our lock acquisition fails fast instead of hanging.
+    console.log('   → opening transaction (0-NULL gate + DDL, atomic)…');
     await prisma.$transaction(
-      stmts.map((sql) => prisma.$executeRawUnsafe(sql))
+      async (tx) => {
+        // Bound every statement in this session so nothing hangs on live Supabase.
+        await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '${LOCK_TIMEOUT_MS}ms'`);
+        await tx.$executeRawUnsafe(`SET LOCAL statement_timeout = '${STMT_TIMEOUT_MS}ms'`);
+
+        // 0-NULL gate — INSIDE the txn, so it is time-of-use consistent with the DDL.
+        const offenders = [];
+        for (const t of GATED_FOR_NULLS) {
+          const rows = await tx.$queryRawUnsafe(`SELECT COUNT(*)::int AS n FROM "${t}" WHERE "tenantId" IS NULL`);
+          const n = rows?.[0]?.n ?? 0;
+          if (n > 0) offenders.push(`${t} (${n})`);
+        }
+        if (offenders.length > 0) {
+          // Throwing rolls the txn back (no DDL applied) and is caught below.
+          throw new Error(`0-NULL gate FAILED inside txn — still-NULL tables: ${offenders.join(', ')}. Re-run step 2.`);
+        }
+        console.log('   ✓ 0-NULL gate passed (inside txn) for all gated tables');
+
+        console.log('   → applying DDL…');
+        for (const sql of stmts) {
+          await tx.$executeRawUnsafe(sql);
+        }
+      },
+      { timeout: TXN_TIMEOUT_MS, maxWait: TXN_MAX_WAIT_MS }
     );
     console.log('\n✅ FINALIZE COMMITTED — tenantId NOT NULL enforced, Customer_phone_key dropped, ' +
                 'new per-tenant unique indexes added. Migration complete.');

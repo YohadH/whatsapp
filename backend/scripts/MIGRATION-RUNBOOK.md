@@ -54,7 +54,11 @@ Backup taken: `__________________________` (fill in id/time before step 3).
 node scripts/backfill-tenants.mjs
 ```
 Creates/reuses the `default` tenant and sets `tenantId` on every `tenantId IS NULL`
-row, table by table (per-table try/catch, `UPDATE ... WHERE tenantId IS NULL`).
+row, table by table (`UPDATE ... WHERE tenantId IS NULL`). After each UPDATE it
+RE-READS the remaining NULL count for that table, and if any table errored or
+still holds NULLs (other than `AdminUser`), the script exits **non-zero** — it
+never prints "complete" on a silent partial failure (no false green before the
+irreversible finalize step).
 > Note: `backfill-tenants.mjs` reads the app's `prisma` client (`DATABASE_URL`).
 > The pooler is fine for row `UPDATE`s (it is only DDL/`pg_dump` that need 5432).
 > `AdminUser.tenantId` stays nullable by design (super_admin = null).
@@ -74,8 +78,27 @@ MIGRATION_DIRECT_URL="postgresql://...:5432/postgres" \
 node scripts/migrate-03-finalize.mjs                              # dry-run: prints exact SQL
 MIGRATION_DIRECT_URL="postgresql://...:5432/postgres" \
   node scripts/migrate-03-finalize.mjs --live                    # runs inside a transaction
-# use --backup-confirmed instead of a local .dump if backup was via Supabase Dashboard
+# If backup was via Supabase Dashboard (no local .dump), confirm it AND state
+# when it was taken so freshness is enforced:
+#   ... --live --backup-confirmed --backup-taken-at=2026-07-20T09:00:00Z
 ```
+**Backup freshness (stale-backup guard):** the finalize step refuses a backup
+older than **12h** (override with `MIGRATION_MAX_BACKUP_AGE_HOURS`). A local
+`.dump` is age-checked by file mtime; a Dashboard backup is age-checked against
+`--backup-taken-at`. A stale dump is treated as no backup at all.
+
+**Timeouts (no hung transaction):** the finalize transaction sets a `lock_timeout`
+(15s), a per-statement `statement_timeout` (110s), and a whole-transaction
+`timeout` (120s) so a lock wait against live Supabase fails fast and rolls back
+instead of hanging. Override via `MIGRATION_LOCK_TIMEOUT_MS` /
+`MIGRATION_STMT_TIMEOUT_MS` / `MIGRATION_TXN_TIMEOUT_MS` if a table is large enough
+to need longer — but keep `STMT < TXN`.
+
+**TOCTOU guard:** the 0-NULL gate runs INSIDE the same transaction as the DDL
+(not as a separate pre-check), so a row inserted with a NULL `tenantId` by the
+still-live app between check and DDL cannot slip through — the `SET NOT NULL`
+holds an ACCESS EXCLUSIVE lock and validates against the same snapshot.
+
 Inside a single `prisma.$transaction` (all-or-nothing):
 1. `ALTER TABLE ... ALTER COLUMN "tenantId" SET NOT NULL` for the 12 gated tables.
 2. `ALTER TABLE "Customer" DROP CONSTRAINT IF EXISTS "Customer_phone_key"` (old
