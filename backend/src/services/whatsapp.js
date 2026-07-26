@@ -203,6 +203,27 @@ export async function checkToken(creds) {
   }
 }
 
+// Subscribe our app to a WABA's webhooks so inbound customer messages are delivered.
+// Embedded Signup does this automatically; the manual token path calls it too so both
+// connection methods behave the same. Idempotent — subscribing twice is a no-op.
+// Returns { ok, skipped?, error? }; never throws (best-effort).
+export async function subscribeAppToWaba(creds) {
+  const c = normalizeCreds(creds);
+  const wabaId = (c.businessAccountId || '').trim();
+  if (!c.token || !wabaId) return { ok: false, skipped: true };
+  try {
+    const res = await fetch(`https://graph.facebook.com/${c.apiVersion}/${wabaId}/subscribed_apps`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${c.token}` },
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json.error) return { ok: false, error: json.error?.message || `HTTP ${res.status}` };
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
 /**
  * Send an approved message template. `bodyParams` fills {{1}}, {{2}}… in order.
  * Throws a metaError on failure (so a broadcast loop can record/react per-recipient).

@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import prisma from '../lib/prisma.js';
 import { asyncHandler } from '../middleware/error.js';
 import { encryptSecret } from '../lib/crypto.js';
-import { checkToken } from '../services/whatsapp.js';
+import { checkToken, subscribeAppToWaba } from '../services/whatsapp.js';
 import { tenantWhatsAppCreds } from '../lib/tenantContext.js';
 import { PLANS, isValidPlan, planEntitlements } from '../lib/plans.js';
 import { connectWhatsApp, embeddedSignupPublicConfig } from '../services/embeddedSignup.js';
@@ -279,7 +279,20 @@ router.put(
     if (b.dailyBroadcastCap !== undefined) data.dailyBroadcastCap = parseInt(b.dailyBroadcastCap, 10) || 0;
     if (b.monthlyMessageLimit !== undefined) data.monthlyMessageLimit = parseInt(b.monthlyMessageLimit, 10) || 0;
 
+    // Trim stray whitespace on IDs — a pasted trailing space breaks Graph API calls.
+    if (typeof data.waBusinessAccountId === 'string') data.waBusinessAccountId = data.waBusinessAccountId.trim() || null;
+    if (typeof data.waPhoneNumberId === 'string') data.waPhoneNumberId = data.waPhoneNumberId.trim() || null;
+
     const tenant = await prisma.tenant.update({ where: { id: req.params.id }, data, select: TENANT_PUBLIC_SELECT });
+
+    // When a token was just set for a tenant that has a WABA, auto-subscribe our app to
+    // that WABA's webhooks (matches Embedded Signup; closes the manual-path gap).
+    if (b.waToken && tenant.waBusinessAccountId) {
+      const full = await prisma.tenant.findUnique({ where: { id: tenant.id } });
+      subscribeAppToWaba(tenantWhatsAppCreds(full))
+        .then((r) => { if (!r.ok && !r.skipped) console.warn('[admin] WABA subscribe failed:', r.error); })
+        .catch((e) => console.warn('[admin] WABA subscribe error:', e.message));
+    }
     res.json(publicTenant(tenant));
   })
 );
