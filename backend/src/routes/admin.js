@@ -8,6 +8,7 @@ import { checkToken } from '../services/whatsapp.js';
 import { tenantWhatsAppCreds } from '../lib/tenantContext.js';
 import { PLANS, isValidPlan, planEntitlements } from '../lib/plans.js';
 import { connectWhatsApp, embeddedSignupPublicConfig } from '../services/embeddedSignup.js';
+import { grantCredits } from '../lib/credits.js';
 
 // Platform-owner (super_admin) routes for provisioning and managing tenants.
 // Mounted at /api/admin behind requireAuth + requireSuperAdmin.
@@ -45,6 +46,8 @@ const TENANT_PUBLIC_SELECT = {
   dailyBroadcastCap: true,
   monthlyMessageLimit: true,
   messagesThisPeriod: true,
+  creditsUsedThisPeriod: true,
+  purchasedCredits: true,
   periodStartedAt: true,
   trialEndsAt: true,
   createdAt: true,
@@ -288,6 +291,67 @@ router.post(
     const tenant = await prisma.tenant.findUnique({ where: { id: req.params.id } });
     if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
     res.json(await checkToken(tenantWhatsAppCreds(tenant)));
+  })
+);
+
+// POST /api/admin/tenants/:id/credits → grant/adjust AI credits (top-up stand-in
+// until the Israeli payment gateway is wired). body: { amount, reason? }
+router.post(
+  '/tenants/:id/credits',
+  asyncHandler(async (req, res) => {
+    const tenant = await prisma.tenant.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
+    const amt = parseInt(req.body?.amount, 10);
+    if (!Number.isInteger(amt) || amt === 0) {
+      return res.status(400).json({ error: 'amount must be a non-zero integer' });
+    }
+    const state = await grantCredits({
+      tenantId: tenant.id,
+      amount: amt,
+      type: amt > 0 ? 'topup' : 'adjust',
+      reason: req.body?.reason || 'manual_grant',
+    });
+    res.json(state);
+  })
+);
+
+// GET /api/admin/credit-purchases?status=pending → credit-pack purchases across all
+// tenants (for manual approval until a payment gateway is wired).
+router.get(
+  '/credit-purchases',
+  asyncHandler(async (req, res) => {
+    const status = req.query.status || 'pending';
+    const purchases = await prisma.creditPurchase.findMany({
+      where: status === 'all' ? {} : { status: String(status) },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+      include: { tenant: { select: { id: true, name: true, slug: true } } },
+    });
+    res.json(purchases);
+  })
+);
+
+// POST /api/admin/credit-purchases/:id/mark-paid → confirm payment + grant the credits.
+router.post(
+  '/credit-purchases/:id/mark-paid',
+  asyncHandler(async (req, res) => {
+    const purchase = await prisma.creditPurchase.findUnique({ where: { id: req.params.id } });
+    if (!purchase) return res.status(404).json({ error: 'Purchase not found' });
+    if (purchase.status === 'paid') return res.status(409).json({ error: 'already paid' });
+
+    // Grant the credits, then flip the purchase to paid (in that order so a failed
+    // grant leaves the purchase pending rather than paid-but-not-credited).
+    await grantCredits({
+      tenantId: purchase.tenantId,
+      amount: purchase.credits,
+      type: 'topup',
+      reason: purchase.packId,
+    });
+    const updated = await prisma.creditPurchase.update({
+      where: { id: purchase.id },
+      data: { status: 'paid', paidAt: new Date(), providerRef: req.body?.ref || 'manual' },
+    });
+    res.json(updated);
   })
 );
 

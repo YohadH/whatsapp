@@ -45,15 +45,21 @@ export default function Settings() {
   );
 }
 
-// Lets a tenant admin connect their own WhatsApp number via Meta Embedded Signup.
-// The one-click flow needs the Meta app to be configured server-side (META_APP_ID
-// + META_CONFIG_ID); until then we tell the user to contact support to connect.
+// Lets a tenant admin connect their WhatsApp number. Primary path: type the number +
+// enter the code Meta texts (registered under the platform's WABA — no popup).
+// Secondary: Meta Embedded Signup (one-click, needs META_APP_ID + META_CONFIG_ID).
 function WhatsAppConnect() {
-  const [state, setState] = useState(null); // { connected, phoneNumberId, embeddedSignup }
+  const [state, setState] = useState(null);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState('');
   const [verify, setVerify] = useState(null);
+  // Connect-by-number two-step flow.
+  const [num, setNum] = useState({ cc: '972', phone: '', name: '', method: 'SMS' });
+  const [step, setStep] = useState('form'); // 'form' → 'code'
+  const [pendingId, setPendingId] = useState('');
+  const [code, setCode] = useState('');
+  const [numBusy, setNumBusy] = useState(false);
 
   function load() {
     setLoading(true);
@@ -68,14 +74,42 @@ function WhatsAppConnect() {
     setError(''); setConnecting(true);
     try {
       const es = state?.embeddedSignup;
-      const { code, phoneNumberId, wabaId } = await launchEmbeddedSignup(es);
-      await api.post('/api/settings/connect-whatsapp', { code, phoneNumberId, wabaId });
+      const { code: fbCode, phoneNumberId, wabaId } = await launchEmbeddedSignup(es);
+      await api.post('/api/settings/connect-whatsapp', { code: fbCode, phoneNumberId, wabaId });
       setVerify(null);
       load();
     } catch (err) {
       setError(err.response?.data?.error || err.message || 'החיבור נכשל');
     } finally {
       setConnecting(false);
+    }
+  }
+
+  async function sendCode() {
+    if (!num.phone.trim() || !num.name.trim()) { setError('יש למלא מספר טלפון ושם עסק'); return; }
+    setError(''); setNumBusy(true);
+    try {
+      const r = await api.post('/api/settings/number/start', { cc: num.cc, phone: num.phone, displayName: num.name, codeMethod: num.method });
+      setPendingId(r.data.phoneNumberId);
+      setStep('code');
+    } catch (err) {
+      setError(err.response?.data?.error || 'שליחת הקוד נכשלה');
+    } finally {
+      setNumBusy(false);
+    }
+  }
+
+  async function verifyNumber() {
+    if (!code.trim()) { setError('יש להזין את הקוד שקיבלתם'); return; }
+    setError(''); setNumBusy(true);
+    try {
+      await api.post('/api/settings/number/verify', { phoneNumberId: pendingId, code });
+      setStep('form'); setCode(''); setPendingId('');
+      load();
+    } catch (err) {
+      setError(err.response?.data?.error || 'אימות הקוד נכשל');
+    } finally {
+      setNumBusy(false);
     }
   }
 
@@ -89,18 +123,17 @@ function WhatsAppConnect() {
     }
   }
 
-  const configured = state?.embeddedSignup?.configured;
+  const esConfigured = state?.embeddedSignup?.configured;
+  const numbering = state?.platformNumbering;
 
   return (
     <div className="card mt-4">
       <div className="flex items-center justify-between mb-1">
         <h3 className="font-semibold">📱 חיבור מספר WhatsApp</h3>
-        {state?.connected && (
-          <button className="btn-ghost text-sm" onClick={runVerify}>בדיקת חיבור</button>
-        )}
+        {state?.connected && <button className="btn-ghost text-sm" onClick={runVerify}>בדיקת חיבור</button>}
       </div>
       <p className="text-sm text-gray-500 mb-3">
-        חברו את חשבון ה-WhatsApp Business שלכם כדי שהסוכן יענה ללקוחות אמיתיים. החיבור מתבצע דרך Meta והטוקן נשמר מוצפן.
+        חברו מספר WhatsApp כדי שהסוכן יענה ללקוחות אמיתיים. הטוקן נשמר מוצפן.
       </p>
 
       {loading ? (
@@ -127,15 +160,46 @@ function WhatsAppConnect() {
             </div>
           )}
 
-          {configured ? (
-            <button className="btn-primary" disabled={connecting} onClick={connect}>
-              {connecting ? 'מחבר…' : state?.connected ? '🔗 חיבור מספר אחר' : '🔗 חיבור WhatsApp'}
-            </button>
-          ) : (
-            <div className="text-xs text-gray-400">
-              החיבור בלחיצה אחת אינו זמין עדיין — יש להגדיר את אפליקציית ה-Meta בשרת
-              (<code>META_APP_ID</code> ו-<code>META_CONFIG_ID</code>). עד אז פנו לתמיכה לחיבור המספר.
+          {/* Primary: connect by number + code */}
+          {numbering ? (
+            <div className="rounded-lg border p-3 mb-3">
+              <div className="text-sm font-medium mb-2">חיבור לפי מספר טלפון</div>
+              {step === 'form' ? (
+                <>
+                  <div className="flex gap-2 mb-2">
+                    <input className="input w-20" value={num.cc} onChange={(e) => setNum((n) => ({ ...n, cc: e.target.value }))} placeholder="972" />
+                    <input className="input flex-1" value={num.phone} onChange={(e) => setNum((n) => ({ ...n, phone: e.target.value }))} placeholder="מספר טלפון (למשל 501234567)" />
+                  </div>
+                  <input className="input mb-2" value={num.name} onChange={(e) => setNum((n) => ({ ...n, name: e.target.value }))} placeholder="שם העסק שיוצג בוואטסאפ" />
+                  <div className="flex items-center gap-3 mb-2 text-sm">
+                    <label className="flex items-center gap-1"><input type="radio" checked={num.method === 'SMS'} onChange={() => setNum((n) => ({ ...n, method: 'SMS' }))} /> SMS</label>
+                    <label className="flex items-center gap-1"><input type="radio" checked={num.method === 'VOICE'} onChange={() => setNum((n) => ({ ...n, method: 'VOICE' }))} /> שיחה קולית</label>
+                  </div>
+                  <button className="btn-primary" disabled={numBusy} onClick={sendCode}>{numBusy ? 'שולח…' : 'שליחת קוד אימות'}</button>
+                </>
+              ) : (
+                <>
+                  <p className="text-xs text-gray-500 mb-2">שלחנו קוד בן 6 ספרות ל-{num.cc}{num.phone}. הזינו אותו כאן:</p>
+                  <input className="input mb-2 tracking-widest text-center" value={code} onChange={(e) => setCode(e.target.value)} placeholder="______" maxLength={8} />
+                  <div className="flex gap-2">
+                    <button className="btn-primary" disabled={numBusy} onClick={verifyNumber}>{numBusy ? 'מאמת…' : 'אימות וחיבור'}</button>
+                    <button className="btn-ghost" disabled={numBusy} onClick={() => { setStep('form'); setCode(''); }}>ביטול</button>
+                  </div>
+                </>
+              )}
             </div>
+          ) : (
+            <div className="text-xs text-gray-400 mb-3">
+              חיבור לפי מספר אינו זמין עדיין — יש להגדיר בשרת חשבון WhatsApp פלטפורמה
+              (<code>PLATFORM_WABA_ID</code> + <code>PLATFORM_WA_TOKEN</code>) לאחר אישור Tech Provider.
+            </div>
+          )}
+
+          {/* Secondary: Embedded Signup */}
+          {esConfigured && (
+            <button className="btn-ghost text-sm" disabled={connecting} onClick={connect}>
+              {connecting ? 'מחבר…' : '🔗 או חיבור דרך Meta (Embedded Signup)'}
+            </button>
           )}
         </>
       )}

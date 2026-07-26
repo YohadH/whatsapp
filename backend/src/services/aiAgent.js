@@ -172,15 +172,19 @@ ${hist || '(התחלת שיחה)'}`;
 // ─────────────────────────────────────────────────────────────
 // Public API
 // ─────────────────────────────────────────────────────────────
-export async function generateAgentResponse(ctx) {
-  if (openai) {
+// Returns { response, ai }. `ai.used` is true only when a real OpenAI call produced
+// the reply (which is what costs a credit); on fallback it's false with null tokens.
+// Pass { allowAI: false } to force the rule-based path (e.g. tenant out of credits).
+export async function generateAgentResponse(ctx, { allowAI = true } = {}) {
+  if (openai && allowAI) {
     try {
-      return await callOpenAI(ctx);
+      const { response, tokensIn, tokensOut } = await callOpenAI(ctx);
+      return { response, ai: { used: true, tokensIn, tokensOut } };
     } catch (err) {
       console.error('[aiAgent] OpenAI failed, falling back to rules:', err.message);
     }
   }
-  return ruleBasedResponse(ctx);
+  return { response: ruleBasedResponse(ctx), ai: { used: false, tokensIn: null, tokensOut: null } };
 }
 
 async function callOpenAI(ctx) {
@@ -199,7 +203,11 @@ async function callOpenAI(ctx) {
 
   const raw = completion.choices?.[0]?.message?.content || '{}';
   const parsed = ResponseSchema.parse(JSON.parse(raw));
-  return parsed;
+  return {
+    response: parsed,
+    tokensIn: completion.usage?.prompt_tokens ?? null,
+    tokensOut: completion.usage?.completion_tokens ?? null,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────

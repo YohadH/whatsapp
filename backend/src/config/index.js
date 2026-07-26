@@ -20,7 +20,7 @@ if (isProd) {
 }
 
 const config = {
-  port: parseInt(process.env.PORT || '4000', 10),
+  port: parseInt(process.env.PORT || '4010', 10),
   env: process.env.NODE_ENV || 'development',
   isProd,
   publicBaseUrl: process.env.PUBLIC_BASE_URL || 'http://localhost:4000',
@@ -68,6 +68,22 @@ const config = {
     enabled: Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY),
   },
 
+  // Platform-hosted numbers: connect a customer's number by having them type it +
+  // enter the verification code, registered under OUR own WABA via the Cloud API
+  // (no Embedded Signup popup). Requires an approved Tech Provider app + a platform
+  // WABA + system-user token. Falls back to the master WhatsApp creds if the
+  // dedicated PLATFORM_* vars aren't set. `pin` is the 2-step PIN set on register.
+  platformWaba: {
+    id: process.env.PLATFORM_WABA_ID || process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || '',
+    token: process.env.PLATFORM_WA_TOKEN || process.env.WHATSAPP_TOKEN || '',
+    pin: process.env.PLATFORM_WA_PIN || '',
+    graphVersion: process.env.META_GRAPH_VERSION || process.env.WHATSAPP_API_VERSION || 'v21.0',
+    enabled: Boolean(
+      (process.env.PLATFORM_WABA_ID || process.env.WHATSAPP_BUSINESS_ACCOUNT_ID) &&
+        (process.env.PLATFORM_WA_TOKEN || process.env.WHATSAPP_TOKEN)
+    ),
+  },
+
   // Meta app used for Embedded Signup (onboarding a customer's WABA in a few
   // clicks). appSecret is the same Meta app secret used for webhook verification.
   meta: {
@@ -81,6 +97,12 @@ const config = {
   sentry: {
     dsn: process.env.SENTRY_DSN || '',
     tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE || '0'),
+  },
+
+  // Credit-pack payments. 'manual' = super-admin approves top-ups (default until an
+  // Israeli card gateway + merchant account are set up). See services/payments.js.
+  payments: {
+    provider: process.env.PAYMENTS_PROVIDER || 'manual', // manual | payplus | meshulam | cardcom
   },
 
   // Per-tenant plan usage window (messagesThisPeriod resets after this many days).

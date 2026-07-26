@@ -25,20 +25,36 @@ export default function Tenants() {
   const [tenants, setTenants] = useState(null);
   const [plans, setPlans] = useState({});
   const [esConfig, setEsConfig] = useState({ configured: false });
+  const [pending, setPending] = useState([]);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState(null); // tenant id being edited
+  const [approving, setApproving] = useState('');
 
   async function load() {
-    const [t, p, es] = await Promise.all([
+    const [t, p, es, pur] = await Promise.all([
       api.get('/api/admin/tenants'),
       api.get('/api/admin/plans'),
       api.get('/api/admin/embedded-signup/config').catch(() => ({ data: { configured: false } })),
+      api.get('/api/admin/credit-purchases?status=pending').catch(() => ({ data: [] })),
     ]);
     setTenants(t.data);
     setPlans(p.data.plans || {});
     setEsConfig(es.data);
+    setPending(pur.data);
   }
   useEffect(() => { load().catch(() => setTenants([])); }, []);
+
+  async function markPaid(purchase) {
+    setApproving(purchase.id);
+    try {
+      await api.post(`/api/admin/credit-purchases/${purchase.id}/mark-paid`, {});
+      await load();
+    } catch {
+      /* surfaced by reload */
+    } finally {
+      setApproving('');
+    }
+  }
 
   function actAs(t) {
     setActiveTenant(t.id);
@@ -54,6 +70,22 @@ export default function Tenants() {
         subtitle="ניהול הלקוחות של הפלטפורמה — פרטי WhatsApp, תוכנית, ומשתמשים"
         actions={<button className="btn-primary" onClick={() => setCreating(true)}>+ עסק חדש</button>}
       />
+
+      {pending.length > 0 && (
+        <div className="card mb-4 border-amber-200 bg-amber-50">
+          <div className="font-semibold text-sm mb-2">💳 רכישות קרדיטים הממתינות לאישור ({pending.length})</div>
+          <div className="space-y-1">
+            {pending.map((p) => (
+              <div key={p.id} className="flex items-center justify-between text-sm bg-white rounded px-3 py-1.5">
+                <span>{p.tenant?.name || p.tenantId} · <span className="text-gray-500">{p.credits.toLocaleString('he-IL')} קרדיטים · ₪{p.amountIls}</span></span>
+                <button className="btn-primary text-xs" disabled={approving === p.id} onClick={() => markPaid(p)}>
+                  {approving === p.id ? 'מאשר…' : 'אישור תשלום'}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {tenants.length === 0 ? (
         <EmptyState>אין עדיין עסקים. צרו את הראשון עם "עסק חדש".</EmptyState>
@@ -191,7 +223,25 @@ function EditTenantModal({ tenantId, plans, esConfig, onClose, onSaved }) {
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [grantAmt, setGrantAmt] = useState('');
+  const [granting, setGranting] = useState(false);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  async function grantCredits() {
+    const amt = parseInt(grantAmt, 10);
+    if (!amt) return;
+    setError(''); setGranting(true);
+    try {
+      const r = await api.post(`/api/admin/tenants/${tenantId}/credits`, { amount: amt, reason: 'manual_grant' });
+      // r.data = { purchased, available, ... } — reflect the new purchased balance locally.
+      setTenant((t) => ({ ...t, purchasedCredits: r.data.purchased, creditsUsedThisPeriod: t.creditsUsedThisPeriod }));
+      setGrantAmt('');
+    } catch (err) {
+      setError(err.response?.data?.error || 'הענקת הקרדיטים נכשלה');
+    } finally {
+      setGranting(false);
+    }
+  }
 
   async function connectEmbeddedSignup() {
     setError(''); setConnecting(true);
@@ -320,6 +370,21 @@ function EditTenantModal({ tenantId, plans, esConfig, onClose, onSaved }) {
           <div className="grid gap-3 md:grid-cols-2">
             <Field label="כותרת" value={form.bioTitle} onChange={set('bioTitle')} />
             <Field label="כותרת משנה" value={form.bioSubtitle} onChange={set('bioSubtitle')} />
+          </div>
+        </div>
+
+        <div className="border-t pt-3">
+          <div className="font-medium text-sm mb-2">קרדיטים ל-AI</div>
+          <div className="text-xs text-gray-500 mb-2">
+            זמינים: <span className="font-semibold text-gray-700">{Math.max(0, (tenant.monthlyMessageLimit || 0) - (tenant.creditsUsedThisPeriod || 0)) + (tenant.purchasedCredits || 0)}</span>
+            {' '}(מכסה חודשית {tenant.monthlyMessageLimit || 0} · נוצלו {tenant.creditsUsedThisPeriod || 0} · נרכשו {tenant.purchasedCredits || 0})
+          </div>
+          <div className="flex gap-2 items-end">
+            <div className="flex-1"><label className="label">הענקת/החסרת קרדיטים</label>
+              <input className="input" type="number" placeholder="לדוגמה 1000 (או ‎-100 להחסרה)" value={grantAmt} onChange={(e) => setGrantAmt(e.target.value)} /></div>
+            <button type="button" className="btn-ghost whitespace-nowrap" disabled={granting} onClick={grantCredits}>
+              {granting ? 'מעניק…' : '+ הענקה'}
+            </button>
           </div>
         </div>
 

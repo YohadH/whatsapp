@@ -26,6 +26,7 @@ import broadcastRoutes from './routes/broadcast.js';
 import uploadsRoutes, { uploadsDir } from './routes/uploads.js';
 import adminRoutes from './routes/admin.js';
 import settingsRoutes from './routes/settings.js';
+import creditsRoutes from './routes/credits.js';
 
 const app = express();
 
@@ -90,6 +91,7 @@ app.use('/api/analytics', requireAuth, withTenant, analyticsRoutes);
 app.use('/api/uploads', requireAuth, withTenant, uploadsRoutes); // audio upload for question voice notes
 app.use('/api/broadcast', requireAuth, withTenant, broadcastRoutes); // bulk send from an uploaded list
 app.use('/api/settings', requireAuth, withTenant, settingsRoutes); // tenant self-serve WhatsApp connect
+app.use('/api/credits', requireAuth, withTenant, creditsRoutes); // AI credit balance + ledger
 
 // ── Serve the built admin frontend (single-service deploy) ───
 // When frontend/dist exists, serve it and fall back to index.html for client-side

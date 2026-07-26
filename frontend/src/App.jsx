@@ -13,6 +13,7 @@ import KnowledgeBase from './pages/KnowledgeBase.jsx';
 import Links from './pages/Links.jsx';
 import Analytics from './pages/Analytics.jsx';
 import Broadcast from './pages/Broadcast.jsx';
+import Credits from './pages/Credits.jsx';
 import Settings from './pages/Settings.jsx';
 import Tenants from './pages/Tenants.jsx';
 
@@ -42,6 +43,7 @@ export default function App() {
       <Route path="/links" element={<Protected><Links /></Protected>} />
       <Route path="/analytics" element={<Protected><Analytics /></Protected>} />
       <Route path="/broadcast" element={<Protected><Broadcast /></Protected>} />
+      <Route path="/credits" element={<Protected><Credits /></Protected>} />
       <Route path="/settings" element={<Protected><Settings /></Protected>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

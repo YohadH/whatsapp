@@ -5,6 +5,12 @@ import { encryptSecret } from '../lib/crypto.js';
 import { checkToken } from '../services/whatsapp.js';
 import { tenantWhatsAppCreds } from '../lib/tenantContext.js';
 import { connectWhatsApp, embeddedSignupPublicConfig } from '../services/embeddedSignup.js';
+import {
+  platformNumberingConfigured,
+  startNumberConnect,
+  verifyAndRegister,
+  splitPhone,
+} from '../services/numberRegistration.js';
 
 // Tenant-facing account settings, scoped to the caller's OWN tenant (req.tenantId,
 // set by withTenant). This lets a tenant admin self-connect their WhatsApp number
@@ -23,7 +29,79 @@ router.get(
       apiVersion: t.waApiVersion || null,
       connected: Boolean(t.waTokenEnc && t.waPhoneNumberId),
       embeddedSignup: embeddedSignupPublicConfig(),
+      platformNumbering: platformNumberingConfigured(),
     });
+  })
+);
+
+// ── Connect by phone number (no Embedded Signup) ─────────────────────────────
+// The customer types their number + a display name; we register it under the
+// PLATFORM's WABA and Meta texts them a code, which they enter to finish.
+
+// POST /api/settings/number/start → add the number to our WABA + trigger the code.
+// body: { cc, phone, displayName, codeMethod? } → { phoneNumberId }
+router.post(
+  '/number/start',
+  asyncHandler(async (req, res) => {
+    const { cc, phoneNumber } = splitPhone(req.body?.cc, req.body?.phone);
+    const displayName = (req.body?.displayName || '').trim();
+
+    // Refuse if the fully-qualified number is already connected to another tenant.
+    if (cc && phoneNumber) {
+      const full = cc + phoneNumber;
+      const clash = await prisma.tenant.findFirst({
+        where: { waPhoneNumberId: full, NOT: { id: req.tenantId } },
+        select: { id: true },
+      });
+      if (clash) return res.status(409).json({ error: 'מספר זה כבר מחובר לחשבון אחר' });
+    }
+
+    try {
+      const { phoneNumberId } = await startNumberConnect({
+        cc,
+        phoneNumber,
+        displayName,
+        codeMethod: req.body?.codeMethod,
+      });
+      res.json({ phoneNumberId, status: 'code_sent' });
+    } catch (err) {
+      res.status(err.status || 502).json({ error: err.message });
+    }
+  })
+);
+
+// POST /api/settings/number/verify → verify the code, register, store on the tenant.
+// body: { phoneNumberId, code } → { connected, phoneNumberId }
+router.post(
+  '/number/verify',
+  asyncHandler(async (req, res) => {
+    const phoneNumberId = String(req.body?.phoneNumberId || '').trim();
+    const code = req.body?.code;
+    if (!phoneNumberId || !code) return res.status(400).json({ error: 'phoneNumberId and code are required' });
+
+    // Guard against binding a number that another tenant already holds.
+    const clash = await prisma.tenant.findFirst({
+      where: { waPhoneNumberId: phoneNumberId, NOT: { id: req.tenantId } },
+      select: { id: true },
+    });
+    if (clash) return res.status(409).json({ error: 'מספר זה כבר מחובר לחשבון אחר' });
+
+    let result;
+    try {
+      result = await verifyAndRegister({ phoneNumberId, code });
+    } catch (err) {
+      return res.status(err.status || 502).json({ error: err.message });
+    }
+
+    await prisma.tenant.update({
+      where: { id: req.tenantId },
+      data: {
+        waPhoneNumberId: result.phoneNumberId,
+        waBusinessAccountId: result.wabaId,
+        waTokenEnc: encryptSecret(result.token),
+      },
+    });
+    res.json({ connected: true, phoneNumberId: result.phoneNumberId, businessAccountId: result.wabaId });
   })
 );
 

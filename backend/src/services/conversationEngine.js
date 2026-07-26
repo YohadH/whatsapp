@@ -3,6 +3,7 @@ import config from '../config/index.js';
 import { generateAgentResponse, ruleBasedResponse } from './aiAgent.js';
 import { sendWhatsAppMessage, sendWhatsAppAudio, sendWhatsAppImage } from './whatsapp.js';
 import { tenantWhatsAppCreds } from '../lib/tenantContext.js';
+import { hasCredits, chargeAiCredit, markLowCreditNudge } from '../lib/credits.js';
 import { trackEvent, EVENTS } from './analytics.js';
 import { computeLeadScore } from './leadScore.js';
 
@@ -163,7 +164,11 @@ export async function handleIncomingMessage({ tenant, phone, text, name, rawPayl
   // correct answer recording). The LLM is used only to (a) answer free-form
   // knowledge-base questions and (b) DETECT intent to start a flow conversationally
   // (e.g. "כן" after being offered). It never executes flow steps itself.
+  // AI credits: only the free-form LLM branch below costs a credit. Deterministic
+  // flow steps (mid-flow, trigger-word start) are always free. When the tenant is
+  // out of credits we force the rule-based path and flag it (graceful degrade).
   let agentResponse;
+  let outOfCredits = false;
   if (conversation.currentFlowId) {
     // Mid-flow → record answer + advance, deterministically.
     agentResponse = ruleBasedResponse(ctx);
@@ -172,8 +177,22 @@ export async function handleIncomingMessage({ tenant, phone, text, name, rawPayl
     ctx.state.startFlowId = suggestedFlow.id;
     agentResponse = ruleBasedResponse(ctx);
   } else {
-    // No flow context → ask the LLM (KB answer or conversational start).
-    const llm = await generateAgentResponse(ctx);
+    // No flow context → ask the LLM (KB answer or conversational start), but only
+    // if the tenant has credits. Out of credits → rule-based reply, no charge.
+    const allowAI = await hasCredits(tenantId);
+    outOfCredits = !allowAI;
+    const { response: llm, ai } = await generateAgentResponse(ctx, { allowAI });
+    if (ai.used) {
+      // A real OpenAI reply was produced → charge exactly one credit.
+      const state = await chargeAiCredit({ tenantId, tokensIn: ai.tokensIn, tokensOut: ai.tokensOut });
+      // Clear any prior low-credit nudge once credits are flowing again.
+      if (tenant.lowCreditNotifiedAt) {
+        await prisma.tenant.update({ where: { id: tenantId }, data: { lowCreditNotifiedAt: null } }).catch(() => {});
+      }
+      if (state && state.available <= 0) await markLowCreditNudge(tenantId); // just hit zero
+    } else if (outOfCredits) {
+      await markLowCreditNudge(tenantId);
+    }
     const wantsToStart =
       llm.flow_id &&
       flows.some((f) => f.id === llm.flow_id) &&
@@ -325,7 +344,7 @@ export async function handleIncomingMessage({ tenant, phone, text, name, rawPayl
     }
   }
 
-  return { conversation, agentResponse: { ...agentResponse, reply: replyText }, replySent, isNew };
+  return { conversation, agentResponse: { ...agentResponse, reply: replyText }, replySent, isNew, outOfCredits };
 }
 
 // ─────────────────────────────────────────────────────────────

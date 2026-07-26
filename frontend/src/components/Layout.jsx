@@ -9,6 +9,7 @@ const NAV = [
   { to: '/links', label: 'קישורים', icon: '🔗' },
   { to: '/broadcast', label: 'שליחה מרובה', icon: '📤' },
   { to: '/analytics', label: 'אנליטיקס', icon: '📈' },
+  { to: '/credits', label: 'קרדיטים', icon: '🎟️' },
   { to: '/settings', label: 'הגדרות', icon: '⚙️' },
 ];
 

@@ -113,4 +113,31 @@ For customers with **no** number. Start manual — no automation until demand is
 | Webhook verify + inbound handling | — | ✅ Built (verified locally) |
 | Per-tenant encrypted token storage | — | ✅ Built (needs `CREDENTIALS_ENC_KEY`) |
 | Buying/registering prepaid SIMs | 🧑‍💻 You | External — manual (concierge) |
-| Super-admin "provided numbers" tracking screen | — | ⏳ Next code task (after new DB) |
+| Connect-by-number flow (type number → enter code) | — | ✅ Built (needs platform WABA below) |
+| Super-admin "provided numbers" tracking screen | — | ⏳ Next code task |
+
+---
+
+## 10. Connect-by-number (platform-hosted numbers)
+
+The alternative to the Embedded Signup popup: the customer just **types their number +
+the code Meta texts them**, and it's registered under **your** WABA via the Cloud API.
+The UI lives in **Settings** but stays hidden until you configure a platform WABA.
+
+**What you set up once (needs an approved Tech Provider app):**
+1. Create a **WhatsApp Business Account (WABA)** under your business
+   (Business Settings → Accounts → WhatsApp Accounts, or App → WhatsApp → API Setup).
+2. Create a **System User** (Business Settings → Users → System Users) → **Generate token**
+   → select your app → grant **`whatsapp_business_management`** + **`whatsapp_business_messaging`**.
+   Assign the system user to the WABA. This is a **permanent** token.
+3. Set the env vars:
+   - `PLATFORM_WABA_ID` = the WABA ID (falls back to `WHATSAPP_BUSINESS_ACCOUNT_ID`)
+   - `PLATFORM_WA_TOKEN` = the system-user token (falls back to `WHATSAPP_TOKEN`)
+   - `PLATFORM_WA_PIN` = any 6-digit PIN
+
+**The flow it drives** (backend already built — `services/numberRegistration.js`):
+add number to WABA → request code → customer enters code → verify → register → stored on tenant.
+
+> The customer (or you, for a number you provide) must enter the one-time code Meta
+> sends — that step can't be automated away. Each number's **display name** is also
+> reviewed by Meta before it can send.

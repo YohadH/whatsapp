@@ -58,6 +58,14 @@ model Tenant {
   periodStartedAt     DateTime  @default(now())
   trialEndsAt         DateTime?
 
+  // ── AI credits (1 credit = 1 AI-answered message) ──
+  // Monthly allotment = monthlyMessageLimit, consumed via creditsUsedThisPeriod
+  // (resets each period). purchasedCredits is a non-resetting top-up balance,
+  // consumed only after the monthly allotment is exhausted. See CREDITS_DESIGN.md.
+  creditsUsedThisPeriod Int       @default(0)
+  purchasedCredits      Int       @default(0)
+  lowCreditNotifiedAt   DateTime? // throttles the "out of credits" nudge
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -71,11 +79,56 @@ model Tenant {
   links         Link[]
   events        AnalyticsEvent[]
   knowledgeBase KnowledgeBase?
-  suppressed    SuppressedNumber[]
-  broadcasts    BroadcastJob[]
-  outboundSends OutboundSend[]
+  suppressed     SuppressedNumber[]
+  broadcasts     BroadcastJob[]
+  outboundSends  OutboundSend[]
+  creditTxns     CreditTransaction[]
+  creditPurchases CreditPurchase[]
 
   @@index([status])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Credit pack purchase (top-up). Created 'pending' when a tenant picks a pack;
+// flipped to 'paid' by the payment webhook (real gateway) or a super-admin (manual),
+// which grants the credits. See CREDITS_DESIGN.md.
+// ─────────────────────────────────────────────────────────────
+model CreditPurchase {
+  id          String    @id @default(cuid())
+  tenantId    String
+  packId      String // e.g. pack_5000
+  credits     Int
+  amountIls   Int // price in whole shekels
+  status      String    @default("pending") // pending | paid | cancelled
+  provider    String    @default("manual") // manual | payplus | meshulam | cardcom
+  providerRef String? // gateway transaction id (when a real provider is wired)
+  createdAt   DateTime  @default(now())
+  paidAt      DateTime?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@index([status, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Credit ledger — every debit (AI reply) and credit (top-up / grant).
+// The single source of truth for "how much a tenant spent". See CREDITS_DESIGN.md.
+// ─────────────────────────────────────────────────────────────
+model CreditTransaction {
+  id        String   @id @default(cuid())
+  tenantId  String
+  type      String // debit | topup | grant | adjust
+  amount    Int // signed: -1 for an AI message, +N for a top-up/grant
+  reason    String? // ai_reply | pack_1000 | manual_grant | ...
+  messageId String? // the agent Message this debit paid for (audit trail)
+  tokensIn  Int? // OpenAI prompt tokens (internal cost tracking)
+  tokensOut Int? // OpenAI completion tokens
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
 }
 
 // ─────────────────────────────────────────────────────────────

@@ -71,6 +71,14 @@ services:
         sync: false
       - key: META_CONFIG_ID # Embedded Signup configuration id
         sync: false
+      # ── Platform-hosted numbers ("connect by number + code") ──
+      # Register customers' numbers under our own WABA via the Cloud API.
+      - key: PLATFORM_WABA_ID # falls back to WHATSAPP_BUSINESS_ACCOUNT_ID
+        sync: false
+      - key: PLATFORM_WA_TOKEN # permanent system-user token; falls back to WHATSAPP_TOKEN
+        sync: false
+      - key: PLATFORM_WA_PIN # 6-digit 2-step PIN set on each registered number
+        sync: false
       # ── Observability ──
       - key: SENTRY_DSN # error tracking (leave empty to disable)
         sync: false
