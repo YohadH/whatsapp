@@ -36,6 +36,11 @@ model Tenant {
   waTokenEnc          String? // encrypted access token
   waVerifyToken       String? // webhook GET-handshake token (per Meta app)
   waApiVersion        String  @default("v21.0")
+  // Meta 2-step-verification PIN set at /register. NOT a secret credential (unlike
+  // waTokenEnc) — kept plaintext, consistent with waBusinessAccountId. MUST be
+  // reused on every re-registration for an already-registered number, or Meta
+  // rejects the call — so once set it is never regenerated. See services/whatsapp.js.
+  waPin               String?
 
   // ── Branding / localization ──
   displayName String?
@@ -46,7 +51,7 @@ model Tenant {
   timezone    String  @default("Asia/Jerusalem")
 
   // ── Legal (per-tenant privacy/terms identity) ──
-  legalCompanyName String?
+  legalCompanyName  String?
   legalContactEmail String?
   legalWebsiteUrl   String?
 
@@ -69,20 +74,20 @@ model Tenant {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  admins        AdminUser[]
-  customers     Customer[]
-  conversations Conversation[]
-  messages      Message[]
-  flows         Flow[]
-  questions     FlowQuestion[]
-  answers       CustomerAnswer[]
-  links         Link[]
-  events        AnalyticsEvent[]
-  knowledgeBase KnowledgeBase?
-  suppressed     SuppressedNumber[]
-  broadcasts     BroadcastJob[]
-  outboundSends  OutboundSend[]
-  creditTxns     CreditTransaction[]
+  admins          AdminUser[]
+  customers       Customer[]
+  conversations   Conversation[]
+  messages        Message[]
+  flows           Flow[]
+  questions       FlowQuestion[]
+  answers         CustomerAnswer[]
+  links           Link[]
+  events          AnalyticsEvent[]
+  knowledgeBase   KnowledgeBase?
+  suppressed      SuppressedNumber[]
+  broadcasts      BroadcastJob[]
+  outboundSends   OutboundSend[]
+  creditTxns      CreditTransaction[]
   creditPurchases CreditPurchase[]
 
   @@index([status])
@@ -138,15 +143,15 @@ model CreditTransaction {
 // can manage all tenants. A tenant admin/agent has a tenantId and is scoped to
 // it. Email is globally unique (it's the login key).
 model AdminUser {
-  id           String   @id @default(cuid())
-  tenantId     String?
-  email        String   @unique
-  name         String
-  passwordHash String
-  role         String   @default("admin") // super_admin | admin | agent
-  mustResetPassword Boolean @default(false)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id                String   @id @default(cuid())
+  tenantId          String?
+  email             String   @unique
+  name              String
+  passwordHash      String
+  role              String   @default("admin") // super_admin | admin | agent
+  mustResetPassword Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 

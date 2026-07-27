@@ -290,10 +290,20 @@ router.put(
     // Best-effort and non-blocking — the save succeeds regardless.
     if (b.waToken && tenant.waPhoneNumberId) {
       const full = await prisma.tenant.findUnique({ where: { id: tenant.id } });
-      finalizeWhatsAppConnection(tenantWhatsAppCreds(full))
-        .then((r) => {
+      // Reuse the tenant's stored 2-step PIN so Meta accepts re-registration; if it
+      // has none, finalize generates one and we persist it for next time.
+      const existingPin = full.waPin || undefined;
+      finalizeWhatsAppConnection(tenantWhatsAppCreds(full), { existingPin })
+        .then(async (r) => {
           if (!r.register.ok && !r.register.skipped) console.warn('[admin] number register failed:', r.register.error);
           if (!r.subscribe.ok && !r.subscribe.skipped) console.warn('[admin] WABA subscribe failed:', r.subscribe.error);
+          // Persist a freshly-generated PIN so future re-registrations reuse it.
+          // Only write when we didn't already have one and register succeeded.
+          if (!full.waPin && r.register.ok && r.register.pin) {
+            await prisma.tenant
+              .update({ where: { id: full.id }, data: { waPin: r.register.pin } })
+              .catch((e) => console.warn('[admin] persist waPin failed:', e.message));
+          }
         })
         .catch((e) => console.warn('[admin] finalize connection error:', e.message));
     }

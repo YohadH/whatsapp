@@ -206,8 +206,17 @@ export async function checkToken(creds) {
 
 // Register a phone number for Cloud API messaging — the final activation step. A
 // number can only send/receive AFTER this (otherwise Graph returns #133010 "Account
-// not registered"). Sets the 2-step-verification PIN when one isn't already set.
-// Best-effort: returns { ok, skipped?, error? }, never throws.
+// not registered"). Sets the 2-step-verification PIN.
+//
+// IMPORTANT: Meta requires the SAME PIN on every /register call for an
+// already-registered number. So the PIN MUST be persisted and reused — never mint a
+// fresh random PIN for a number that already has one, or re-registration fails. The
+// caller passes the tenant's stored `pin` (when it has one); when it's the first
+// registration we generate one and RETURN it so the caller can persist it.
+//
+// Best-effort: returns { ok, skipped?, error?, already?, pin? }, never throws.
+// `pin` in the result is the PIN that was used — the caller should persist it onto
+// the tenant if the tenant did not already have one stored.
 export async function registerPhoneNumber(creds, pin) {
   const c = normalizeCreds(creds);
   if (!c.token || !c.phoneNumberId) return { ok: false, skipped: true };
@@ -220,11 +229,12 @@ export async function registerPhoneNumber(creds, pin) {
     });
     const json = await res.json().catch(() => ({}));
     // "already registered" is a success for our purposes.
-    if (res.ok && (json.success || !json.error)) return { ok: true };
-    if (json.error?.code === 133005 || /already/i.test(json.error?.message || '')) return { ok: true, already: true };
-    return { ok: false, error: json.error?.message || `HTTP ${res.status}` };
+    if (res.ok && (json.success || !json.error)) return { ok: true, pin: usePin };
+    if (json.error?.code === 133005 || /already/i.test(json.error?.message || ''))
+      return { ok: true, already: true, pin: usePin };
+    return { ok: false, error: json.error?.message || `HTTP ${res.status}`, pin: usePin };
   } catch (err) {
-    return { ok: false, error: err.message };
+    return { ok: false, error: err.message, pin: usePin };
   }
 }
 
@@ -232,8 +242,12 @@ export async function registerPhoneNumber(creds, pin) {
 // subscribe our app to its WABA's webhooks. This is what Embedded Signup does under
 // the hood; calling it after a manual token save makes both paths identical — a
 // connected tenant can send AND receive with no extra clicks. Best-effort per step.
-export async function finalizeWhatsAppConnection(creds) {
-  const register = await registerPhoneNumber(creds);
+//
+// `opts.existingPin` is the tenant's already-stored 2-step PIN (if any). Pass it so
+// re-registration reuses the same PIN Meta has on file. The returned
+// `register.pin` is the PIN that was used — persist it on the tenant when it had none.
+export async function finalizeWhatsAppConnection(creds, opts = {}) {
+  const register = await registerPhoneNumber(creds, opts.existingPin);
   const subscribe = creds?.businessAccountId ? await subscribeAppToWaba(creds) : { ok: false, skipped: true };
   return { register, subscribe };
 }
