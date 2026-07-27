@@ -1,5 +1,50 @@
 import prisma from '../lib/prisma.js';
 
+// EXPLICIT column projection for the Tenant record that withTenant() loads and
+// attaches to every tenant-scoped request. This is deliberately NOT a select-all.
+//
+// WHY (schema-drift hardening — 3rd occurrence of this failure class, see
+// decisions/lessons-learned.md AP-T58/AP-T64, BUG-WA-002): a bare
+// `findUnique({ where:{id} })` implicitly selects EVERY column declared in
+// schema.prisma. If schema.prisma declares a column that has not actually been
+// migrated onto the live DB yet, that select-all makes Prisma request the
+// missing column and every tenant-scoped route 500s across the board (P2022).
+// By listing only the columns that withTenant() and its downstream callers
+// actually read, a not-yet-migrated column added to schema.prisma cannot take
+// down the whole tenant surface — the new column is simply not requested until a
+// caller (and this list) is updated to use it, which is a code change, not a
+// silent runtime break.
+//
+// EVERY field here is read by a withTenant()-mounted consumer. When you add a
+// field, confirm (a) it is live-migrated (backend/prisma/migrations/), and (b) a
+// caller actually needs it. Consumers and the fields they read:
+//   - withTenant() itself ................ id, status
+//   - tenantWhatsAppCreds() (lib/tenantContext.js) . id, waTokenEnc,
+//         waPhoneNumberId, waBusinessAccountId, waApiVersion
+//   - settings.js GET /whatsapp .......... waPhoneNumberId, waBusinessAccountId,
+//         waApiVersion, waTokenEnc
+//   - quotaStatus()/tenantCap() (broadcastRunner.js) . id, dailyBroadcastCap
+//   - creditsState() (lib/credits.js) .... monthlyMessageLimit,
+//         creditsUsedThisPeriod, purchasedCredits
+//   - credits.js GET / .................... periodStartedAt
+//   - handleIncomingMessage() (conversationEngine.js, via /simulate) . id,
+//         lowCreditNotifiedAt
+// All columns below are present in migration 0_init / 1_credits (verified live).
+export const TENANT_SELECT = {
+  id: true,
+  status: true,
+  waPhoneNumberId: true,
+  waBusinessAccountId: true,
+  waTokenEnc: true,
+  waApiVersion: true,
+  dailyBroadcastCap: true,
+  monthlyMessageLimit: true,
+  creditsUsedThisPeriod: true,
+  purchasedCredits: true,
+  periodStartedAt: true,
+  lowCreditNotifiedAt: true,
+};
+
 // Resolve the active tenant for a request and attach `req.tenant` / `req.tenantId`.
 // Must run AFTER requireAuth.
 //
@@ -24,7 +69,7 @@ export async function withTenant(req, res, next) {
       });
     }
 
-    const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } });
+    const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: TENANT_SELECT });
     if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
 
     // A non-super-admin bound to a different tenant must never reach another's data.
