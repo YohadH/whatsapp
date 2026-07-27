@@ -299,10 +299,39 @@ router.put(
           if (!r.subscribe.ok && !r.subscribe.skipped) console.warn('[admin] WABA subscribe failed:', r.subscribe.error);
           // Persist a freshly-generated PIN so future re-registrations reuse it.
           // Only write when we didn't already have one and register succeeded.
+          //
+          // CONCURRENCY (fixes the last-write-wins waPin race): two simultaneous
+          // "connect tenant" PUTs for the same tenant can each generate a DIFFERENT
+          // PIN, send it to Meta, and — with an unconditional update — both overwrite
+          // waPin (last-write-wins), so the stored PIN can end up NOT matching the one
+          // Meta actually accepted, with no self-correction path. Mirror the TOCTOU
+          // guard from mark-paid (commit 2d5b9b3): a conditional updateMany that only
+          // writes when waPin IS STILL null lets Postgres serialize the row write —
+          // exactly one concurrent caller wins (count 1) and its PIN sticks; every
+          // other caller sees count 0 and leaves the winner's PIN untouched. Since
+          // finalize reuses an already-stored PIN when one exists, whichever PIN wins
+          // the DB write is the one that was (or will be, on retry) registered with
+          // Meta — the stored value can no longer diverge from what Meta holds.
           if (!full.waPin && r.register.ok && r.register.pin) {
-            await prisma.tenant
-              .update({ where: { id: full.id }, data: { waPin: r.register.pin } })
-              .catch((e) => console.warn('[admin] persist waPin failed:', e.message));
+            const persisted = await prisma.tenant
+              .updateMany({
+                where: { id: full.id, waPin: null },
+                data: { waPin: r.register.pin },
+              })
+              .catch((e) => {
+                console.warn('[admin] persist waPin failed:', e.message);
+                return { count: 0 };
+              });
+            if (persisted.count === 0) {
+              // Another concurrent connect already set waPin first (or it was set
+              // between our read and this write). Skip — do NOT overwrite the winner's
+              // PIN; that value is the authoritative one for future re-registration.
+              console.warn(
+                '[admin] waPin already set by a concurrent connect for tenant',
+                full.id,
+                '— keeping the existing PIN, not overwriting.'
+              );
+            }
           }
         })
         .catch((e) => console.warn('[admin] finalize connection error:', e.message));
