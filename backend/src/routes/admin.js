@@ -349,26 +349,60 @@ router.get(
 );
 
 // POST /api/admin/credit-purchases/:id/mark-paid → confirm payment + grant the credits.
+//
+// CONCURRENCY (fixes the TOCTOU double-credit race): the old code did a read
+// (findUnique) → guard (status === 'paid') → grant → write (update). Under
+// Postgres' default Read Committed isolation, two concurrent calls for the same
+// purchase.id (admin double-click, two open tabs, a webhook retry) could both read
+// status:'pending', both pass the guard, and both call grantCredits() — crediting
+// the tenant twice for one real payment. CreditPurchase.status has no unique/
+// conditional DB constraint to catch it.
+//
+// The fix mirrors chargeAiCredit(): make the status flip itself the atomic gate.
+// A single conditional UPDATE ... WHERE id = ? AND status <> 'paid' lets Postgres
+// serialize the row write — exactly one concurrent caller sees 1 affected row (it
+// "won the race"), every other sees 0. We only grant credits on the winning call.
+// The flip, the grant, and the ledger row all live in ONE transaction, so a crash
+// between the flip and the grant can't leave the purchase paid-but-not-credited
+// (the whole transaction rolls back together).
 router.post(
   '/credit-purchases/:id/mark-paid',
   asyncHandler(async (req, res) => {
-    const purchase = await prisma.creditPurchase.findUnique({ where: { id: req.params.id } });
-    if (!purchase) return res.status(404).json({ error: 'Purchase not found' });
-    if (purchase.status === 'paid') return res.status(409).json({ error: 'already paid' });
+    const id = req.params.id;
+    const providerRef = req.body?.ref || 'manual';
 
-    // Grant the credits, then flip the purchase to paid (in that order so a failed
-    // grant leaves the purchase pending rather than paid-but-not-credited).
-    await grantCredits({
-      tenantId: purchase.tenantId,
-      amount: purchase.credits,
-      type: 'topup',
-      reason: purchase.packId,
+    const outcome = await prisma.$transaction(async (tx) => {
+      // Atomic gate: flip pending → paid only if not already paid. The affected-row
+      // count tells us whether THIS call won the race (1) or lost it / already paid (0).
+      const flip = await tx.creditPurchase.updateMany({
+        where: { id, status: { not: 'paid' } },
+        data: { status: 'paid', paidAt: new Date(), providerRef },
+      });
+
+      if (flip.count !== 1) {
+        // 0 rows: either the purchase doesn't exist, or it was already paid (a
+        // concurrent caller won, or a prior mark-paid). Distinguish for the response;
+        // in NEITHER case do we grant credits again.
+        const existing = await tx.creditPurchase.findUnique({ where: { id } });
+        if (!existing) return { code: 404, body: { error: 'Purchase not found' } };
+        return { code: 409, body: { error: 'already paid' } };
+      }
+
+      // We won the race → grant the credits in the SAME transaction. Inlined (rather
+      // than calling grantCredits, which opens its own transaction) so the balance
+      // increment + ledger row are atomic with the status flip.
+      const purchase = await tx.creditPurchase.findUnique({ where: { id } });
+      await tx.tenant.update({
+        where: { id: purchase.tenantId },
+        data: { purchasedCredits: { increment: purchase.credits } },
+      });
+      await tx.creditTransaction.create({
+        data: { tenantId: purchase.tenantId, type: 'topup', amount: purchase.credits, reason: purchase.packId },
+      });
+      return { code: 200, body: purchase };
     });
-    const updated = await prisma.creditPurchase.update({
-      where: { id: purchase.id },
-      data: { status: 'paid', paidAt: new Date(), providerRef: req.body?.ref || 'manual' },
-    });
-    res.json(updated);
+
+    res.status(outcome.code).json(outcome.body);
   })
 );
 
