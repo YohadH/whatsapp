@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import prisma from '../lib/prisma.js';
 import { asyncHandler } from '../middleware/error.js';
 import { encryptSecret } from '../lib/crypto.js';
-import { checkToken, subscribeAppToWaba } from '../services/whatsapp.js';
+import { checkToken, finalizeWhatsAppConnection } from '../services/whatsapp.js';
 import { tenantWhatsAppCreds } from '../lib/tenantContext.js';
 import { PLANS, isValidPlan, planEntitlements } from '../lib/plans.js';
 import { connectWhatsApp, embeddedSignupPublicConfig } from '../services/embeddedSignup.js';
@@ -285,13 +285,17 @@ router.put(
 
     const tenant = await prisma.tenant.update({ where: { id: req.params.id }, data, select: TENANT_PUBLIC_SELECT });
 
-    // When a token was just set for a tenant that has a WABA, auto-subscribe our app to
-    // that WABA's webhooks (matches Embedded Signup; closes the manual-path gap).
-    if (b.waToken && tenant.waBusinessAccountId) {
+    // When a token was just set, complete the connection like Embedded Signup does:
+    // register the number for Cloud API + subscribe our app to its WABA's webhooks.
+    // Best-effort and non-blocking — the save succeeds regardless.
+    if (b.waToken && tenant.waPhoneNumberId) {
       const full = await prisma.tenant.findUnique({ where: { id: tenant.id } });
-      subscribeAppToWaba(tenantWhatsAppCreds(full))
-        .then((r) => { if (!r.ok && !r.skipped) console.warn('[admin] WABA subscribe failed:', r.error); })
-        .catch((e) => console.warn('[admin] WABA subscribe error:', e.message));
+      finalizeWhatsAppConnection(tenantWhatsAppCreds(full))
+        .then((r) => {
+          if (!r.register.ok && !r.register.skipped) console.warn('[admin] number register failed:', r.register.error);
+          if (!r.subscribe.ok && !r.subscribe.skipped) console.warn('[admin] WABA subscribe failed:', r.subscribe.error);
+        })
+        .catch((e) => console.warn('[admin] finalize connection error:', e.message));
     }
     res.json(publicTenant(tenant));
   })

@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import config from '../config/index.js';
 
 // ─────────────────────────────────────────────────────────────
@@ -201,6 +202,40 @@ export async function checkToken(creds) {
   } catch (err) {
     return { configured: true, valid: false, error: err.message };
   }
+}
+
+// Register a phone number for Cloud API messaging — the final activation step. A
+// number can only send/receive AFTER this (otherwise Graph returns #133010 "Account
+// not registered"). Sets the 2-step-verification PIN when one isn't already set.
+// Best-effort: returns { ok, skipped?, error? }, never throws.
+export async function registerPhoneNumber(creds, pin) {
+  const c = normalizeCreds(creds);
+  if (!c.token || !c.phoneNumberId) return { ok: false, skipped: true };
+  const usePin = pin || config.platformWaba?.pin || String(crypto.randomInt(100000, 999999));
+  try {
+    const res = await fetch(`https://graph.facebook.com/${c.apiVersion}/${c.phoneNumberId}/register`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${c.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messaging_product: 'whatsapp', pin: usePin }),
+    });
+    const json = await res.json().catch(() => ({}));
+    // "already registered" is a success for our purposes.
+    if (res.ok && (json.success || !json.error)) return { ok: true };
+    if (json.error?.code === 133005 || /already/i.test(json.error?.message || '')) return { ok: true, already: true };
+    return { ok: false, error: json.error?.message || `HTTP ${res.status}` };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+// The full "connect a number" pipeline: register the number for Cloud API, then
+// subscribe our app to its WABA's webhooks. This is what Embedded Signup does under
+// the hood; calling it after a manual token save makes both paths identical — a
+// connected tenant can send AND receive with no extra clicks. Best-effort per step.
+export async function finalizeWhatsAppConnection(creds) {
+  const register = await registerPhoneNumber(creds);
+  const subscribe = creds?.businessAccountId ? await subscribeAppToWaba(creds) : { ok: false, skipped: true };
+  return { register, subscribe };
 }
 
 // Subscribe our app to a WABA's webhooks so inbound customer messages are delivered.
