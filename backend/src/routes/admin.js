@@ -290,52 +290,76 @@ router.put(
     // register the number for Cloud API + subscribe our app to its WABA's webhooks.
     // Best-effort and non-blocking — the save succeeds regardless.
     if (b.waToken && tenant.waPhoneNumberId) {
-      const full = await prisma.tenant.findUnique({ where: { id: tenant.id } });
-      // Reuse the tenant's stored 2-step PIN so Meta accepts re-registration; if it
-      // has none, finalize generates one and we persist it for next time.
-      const existingPin = full.waPin || undefined;
-      finalizeWhatsAppConnection(tenantWhatsAppCreds(full), { existingPin })
-        .then(async (r) => {
-          if (!r.register.ok && !r.register.skipped) console.warn('[admin] number register failed:', r.register.error);
-          if (!r.subscribe.ok && !r.subscribe.skipped) console.warn('[admin] WABA subscribe failed:', r.subscribe.error);
-          // Persist a freshly-generated PIN so future re-registrations reuse it.
-          // Only write when we didn't already have one and register succeeded.
-          //
-          // CONCURRENCY (fixes the last-write-wins waPin race): two simultaneous
-          // "connect tenant" PUTs for the same tenant can each generate a DIFFERENT
-          // PIN, send it to Meta, and — with an unconditional update — both overwrite
-          // waPin (last-write-wins), so the stored PIN can end up NOT matching the one
-          // Meta actually accepted, with no self-correction path. Mirror the TOCTOU
-          // guard from mark-paid (commit 2d5b9b3): a conditional updateMany that only
-          // writes when waPin IS STILL null lets Postgres serialize the row write —
-          // exactly one concurrent caller wins (count 1) and its PIN sticks; every
-          // other caller sees count 0 and leaves the winner's PIN untouched. Since
-          // finalize reuses an already-stored PIN when one exists, whichever PIN wins
-          // the DB write is the one that was (or will be, on retry) registered with
-          // Meta — the stored value can no longer diverge from what Meta holds.
-          if (!full.waPin && r.register.ok && r.register.pin) {
-            const persisted = await prisma.tenant
-              .updateMany({
-                where: { id: full.id, waPin: null },
-                data: { waPin: r.register.pin },
-              })
-              .catch((e) => {
-                console.warn('[admin] persist waPin failed:', e.message);
-                return { count: 0 };
-              });
-            if (persisted.count === 0) {
-              // Another concurrent connect already set waPin first (or it was set
-              // between our read and this write). Skip — do NOT overwrite the winner's
-              // PIN; that value is the authoritative one for future re-registration.
-              console.warn(
-                '[admin] waPin already set by a concurrent connect for tenant',
-                full.id,
-                '— keeping the existing PIN, not overwriting.'
-              );
+      // GRACEFUL DEGRADATION (schema-drift): this block re-fetches the FULL tenant
+      // row to read `waPin` (needed to reuse the 2-step PIN for Meta re-registration).
+      // Unlike the other fixes in the drift-hardening chain, this one CANNOT be fixed
+      // with an explicit `select` — `waPin` (migration 3_tenant_wa_pin) is genuinely
+      // absent from the live DB, so selecting it explicitly still throws P2022. The
+      // read below runs directly in the handler body (not inside the fire-and-forget
+      // .then()), so an unguarded throw here would surface as a plain 500 via
+      // asyncHandler — AFTER the primary tenant.update() at :287 already committed.
+      // That gave admins a spurious 500 on an ordinary "set/rotate WhatsApp token"
+      // action even though their change had saved. We therefore wrap the waPin
+      // re-fetch + Meta-finalize in try/catch: on ANY failure (the missing-column
+      // P2022 or otherwise) we log and skip the finalize step, and still return the
+      // success response built from the tenant row that WAS saved at :287. Applying
+      // the migration (task whatsapp-agent-bug-wa-schema-drift-wapin-p0) is the real
+      // fix that lets this block run; this is only the crash-safety net until then.
+      try {
+        const full = await prisma.tenant.findUnique({ where: { id: tenant.id } });
+        // Reuse the tenant's stored 2-step PIN so Meta accepts re-registration; if it
+        // has none, finalize generates one and we persist it for next time.
+        const existingPin = full.waPin || undefined;
+        finalizeWhatsAppConnection(tenantWhatsAppCreds(full), { existingPin })
+          .then(async (r) => {
+            if (!r.register.ok && !r.register.skipped) console.warn('[admin] number register failed:', r.register.error);
+            if (!r.subscribe.ok && !r.subscribe.skipped) console.warn('[admin] WABA subscribe failed:', r.subscribe.error);
+            // Persist a freshly-generated PIN so future re-registrations reuse it.
+            // Only write when we didn't already have one and register succeeded.
+            //
+            // CONCURRENCY (fixes the last-write-wins waPin race): two simultaneous
+            // "connect tenant" PUTs for the same tenant can each generate a DIFFERENT
+            // PIN, send it to Meta, and — with an unconditional update — both overwrite
+            // waPin (last-write-wins), so the stored PIN can end up NOT matching the one
+            // Meta actually accepted, with no self-correction path. Mirror the TOCTOU
+            // guard from mark-paid (commit 2d5b9b3): a conditional updateMany that only
+            // writes when waPin IS STILL null lets Postgres serialize the row write —
+            // exactly one concurrent caller wins (count 1) and its PIN sticks; every
+            // other caller sees count 0 and leaves the winner's PIN untouched. Since
+            // finalize reuses an already-stored PIN when one exists, whichever PIN wins
+            // the DB write is the one that was (or will be, on retry) registered with
+            // Meta — the stored value can no longer diverge from what Meta holds.
+            if (!full.waPin && r.register.ok && r.register.pin) {
+              const persisted = await prisma.tenant
+                .updateMany({
+                  where: { id: full.id, waPin: null },
+                  data: { waPin: r.register.pin },
+                })
+                .catch((e) => {
+                  console.warn('[admin] persist waPin failed:', e.message);
+                  return { count: 0 };
+                });
+              if (persisted.count === 0) {
+                // Another concurrent connect already set waPin first (or it was set
+                // between our read and this write). Skip — do NOT overwrite the winner's
+                // PIN; that value is the authoritative one for future re-registration.
+                console.warn(
+                  '[admin] waPin already set by a concurrent connect for tenant',
+                  full.id,
+                  '— keeping the existing PIN, not overwriting.'
+                );
+              }
             }
-          }
-        })
-        .catch((e) => console.warn('[admin] finalize connection error:', e.message));
+          })
+          .catch((e) => console.warn('[admin] finalize connection error:', e.message));
+      } catch (e) {
+        // Missing-column P2022 (waPin not yet migrated live) or any other failure in
+        // the waPin re-fetch / Meta-finalize block. The primary tenant.update() at
+        // :287 already succeeded, so we do NOT let this discard the saved change:
+        // log, skip the (best-effort) Meta re-registration, and fall through to the
+        // normal success response below.
+        console.warn('[admin] skipped WhatsApp finalize after token update (waPin re-fetch failed):', e.message);
+      }
     }
     res.json(publicTenant(tenant));
   })
@@ -350,9 +374,11 @@ router.post(
     // column (e.g. Tenant.waPin, migration 3_tenant_wa_pin) and 500ing. This
     // handler only needs the WhatsApp creds for checkToken(), which TENANT_SELECT
     // covers (waTokenEnc/waPhoneNumberId/waBusinessAccountId/waApiVersion) and
-    // which deliberately excludes waPin. NOTE: the direct waPin lookup at :292
-    // (connect-tenant finalize) is intentionally left select-all — it needs waPin
-    // and is a separate owner-gated concern.
+    // which deliberately excludes waPin. NOTE: the direct waPin lookup in the
+    // PUT /tenants/:id finalize block is intentionally left select-all — it needs
+    // waPin, so no select can fix it; it is instead wrapped in try/catch there to
+    // degrade gracefully until migration 3_tenant_wa_pin is applied live (a separate
+    // owner-gated concern).
     const tenant = await prisma.tenant.findUnique({ where: { id: req.params.id }, select: TENANT_SELECT });
     if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
     res.json(await checkToken(tenantWhatsAppCreds(tenant)));
