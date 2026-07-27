@@ -12,6 +12,7 @@
     "db:migrate": "prisma migrate dev",
     "db:seed": "node prisma/seed.js",
     "db:studio": "prisma studio",
+    "check:schema-parity": "node scripts/check-schema-migration-parity.mjs",
     "postinstall": "prisma generate"
   },
   "prisma": {
