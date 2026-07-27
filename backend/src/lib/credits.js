@@ -111,14 +111,27 @@ export async function grantCredits({ tenantId, amount, type = 'grant', reason = 
 // Mark that we've nudged this tenant about being out of credits, so we do it once
 // per low-balance episode (cleared on the next successful charge). Returns true if
 // this call is the one that should surface the nudge.
+//
+// CONCURRENCY (TOCTOU, see AP-T72): two back-to-back inbound messages for a tenant
+// that just hit zero both run this. The old code did read-then-write
+// (findUnique -> gate on lowCreditNotifiedAt==null -> update), so under Postgres
+// Read Committed both could read null, both pass the guard, and both return true —
+// violating the "surface the nudge exactly once per low-balance episode" contract.
+// Fix mirrors chargeAiCredit()/mark-paid (commits cf4ceb5 / 2d5b9b3): make the
+// null->timestamp flip the atomic gate. A single conditional updateMany WHERE
+// lowCreditNotifiedAt IS NULL lets Postgres serialize the row write — exactly one
+// concurrent caller sees count===1 (return true, "won the flip"), every other sees
+// count===0 (return false), so the nudge fires once even under a race.
 export async function markLowCreditNudge(tenantId) {
-  const t = await prisma.tenant.findUnique({
-    where: { id: tenantId },
-    select: { lowCreditNotifiedAt: true },
-  });
-  if (t?.lowCreditNotifiedAt) return false;
-  await prisma.tenant
-    .update({ where: { id: tenantId }, data: { lowCreditNotifiedAt: new Date() } })
-    .catch(() => {});
-  return true;
+  try {
+    const { count } = await prisma.tenant.updateMany({
+      where: { id: tenantId, lowCreditNotifiedAt: null },
+      data: { lowCreditNotifiedAt: new Date() },
+    });
+    return count === 1;
+  } catch {
+    // Best-effort like the prior read-then-write (which swallowed update errors):
+    // never let a nudge-bookkeeping failure break message processing.
+    return false;
+  }
 }
