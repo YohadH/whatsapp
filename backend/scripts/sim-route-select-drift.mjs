@@ -89,6 +89,27 @@ async function run() {
   record('admin.js:347 verify-credentials select shape (TENANT_SELECT) survives drift',
     !!adminRow && ['waTokenEnc', 'waPhoneNumberId', 'waBusinessAccountId', 'waApiVersion'].every((k) => k in adminRow));
 
+  // broadcastRunner.js runLoop() — findUnique({ where:{ id }, select: TENANT_SELECT }).
+  // This is the last select-all Tenant lookup in the drift-hardening chain: it runs
+  // inside runLoop (fired by POST /api/broadcast + resume), and startJob's catch
+  // silently turns a P2022 here into status:'aborted' AFTER the client got HTTP 202 —
+  // so a drift on this path silently breaks the bulk-campaign send feature.
+  const broadcastRow = await prisma.tenant.findUnique({ where: { id: 'tnt_demo' }, select: TENANT_SELECT });
+  record('broadcastRunner.js runLoop select shape (TENANT_SELECT) survives drift',
+    !!broadcastRow && broadcastRow.id === 'tnt_demo');
+  // Assert every field runLoop's downstream code actually reads is present:
+  //   tenantWhatsAppCreds() → waTokenEnc/waPhoneNumberId/waBusinessAccountId/waApiVersion
+  //   tenantCap()           → dailyBroadcastCap
+  record('broadcastRunner.js row carries the fields runLoop consumes (creds + dailyBroadcastCap)',
+    !!broadcastRow &&
+      ['waTokenEnc', 'waPhoneNumberId', 'waBusinessAccountId', 'waApiVersion', 'dailyBroadcastCap'].every(
+        (k) => k in broadcastRow
+      ));
+  // Regression guard: the OLD select-all lookup runLoop used to run still throws.
+  let broadcastOldThrow = false;
+  try { await prisma.tenant.findUnique({ where: { id: 'tnt_demo' } }); } catch (e) { broadcastOldThrow = e.code === 'P2022'; }
+  record('OLD broadcastRunner.js select-all shape still aborts the job under drift (regression guard)', broadcastOldThrow);
+
   // bio.js select shape
   const bioRow = await prisma.tenant.findUnique({ where: { slug: 'demo' }, select: BIO_SELECT });
   record('bio.js findUnique select shape (BIO_SELECT) survives drift',

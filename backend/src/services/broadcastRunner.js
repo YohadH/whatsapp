@@ -3,6 +3,7 @@ import config from '../config/index.js';
 import { normalizePhone, isValidPhone } from '../lib/phone.js';
 import { sendWhatsAppTemplate, sendWhatsAppMessage } from './whatsapp.js';
 import { tenantWhatsAppCreds } from '../lib/tenantContext.js';
+import { TENANT_SELECT } from '../middleware/tenant.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -118,7 +119,14 @@ async function runLoop(jobId, flag) {
   const job = await prisma.broadcastJob.findUnique({ where: { id: jobId } });
   if (!job || job.status !== 'running') return;
 
-  const tenant = await prisma.tenant.findUnique({ where: { id: job.tenantId } });
+  // EXPLICIT select (schema-drift hardening, see middleware/tenant.js TENANT_SELECT
+  // + AP-T58): a bare findUnique implicitly SELECTs every schema.prisma column, so a
+  // not-yet-migrated column (e.g. waPin) makes this line throw P2022 — which startJob's
+  // catch silently turns into `status:'aborted'` AFTER the client already got HTTP 202.
+  // TENANT_SELECT covers everything runLoop reads: tenantWhatsAppCreds() (id, waTokenEnc,
+  // waPhoneNumberId, waBusinessAccountId, waApiVersion) + tenantCap() (dailyBroadcastCap)
+  // + tenant.id for the per-tenant ledger/suppression queries.
+  const tenant = await prisma.tenant.findUnique({ where: { id: job.tenantId }, select: TENANT_SELECT });
   if (!tenant) {
     await prisma.broadcastJob
       .update({ where: { id: jobId }, data: { status: 'aborted', abortReason: 'הלקוח לא נמצא' } })
