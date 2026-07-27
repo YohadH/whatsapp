@@ -9,6 +9,9 @@
   "scripts": {
     "build": "cd frontend && npm install --include=dev && npm run build && cd ../backend && npm install --include=dev",
     "postinstall": "npm run build",
-    "start": "cd backend && npm start"
+    "start": "cd backend && npm start",
+    "install-hooks": "node scripts/install-git-hooks.mjs",
+    "prepare": "node scripts/install-git-hooks.mjs",
+    "check:schema-parity": "node backend/scripts/check-schema-migration-parity.mjs"
   }
 }
