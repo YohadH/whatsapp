@@ -4,7 +4,7 @@ import config from '../config/index.js';
 import prisma from '../lib/prisma.js';
 import { asyncHandler } from '../middleware/error.js';
 import { requireAuth } from '../middleware/auth.js';
-import { withTenant } from '../middleware/tenant.js';
+import { withTenant, TENANT_SELECT } from '../middleware/tenant.js';
 import { parseIncomingMessage } from '../services/whatsapp.js';
 import { handleIncomingMessage } from '../services/conversationEngine.js';
 import { handleOptOut } from '../services/optOut.js';
@@ -63,8 +63,18 @@ router.post(
       return;
     }
 
+    // Explicit projection (schema-drift hardening — see middleware/tenant.js
+    // TENANT_SELECT). A bare findUnique select-all here requests EVERY column
+    // declared in schema.prisma; a column declared but not yet migrated live
+    // (e.g. Tenant.waPin, migration 3_tenant_wa_pin) makes Prisma throw P2022.
+    // This webhook acks with HTTP 200 BEFORE this lookup runs, so a throw here is
+    // swallowed (console-only) and the customer's message is silently dropped —
+    // strictly worse than a 500. TENANT_SELECT covers every field the downstream
+    // consumers (handleOptOut, handleIncomingMessage → tenantWhatsAppCreds/credits)
+    // actually read; waPhoneNumberId is unique so findUnique still applies.
     const tenant = await prisma.tenant.findUnique({
       where: { waPhoneNumberId: parsed.phoneNumberId },
+      select: TENANT_SELECT,
     });
     if (!tenant) {
       console.warn(`[webhook] no tenant for phone_number_id ${parsed.phoneNumberId} — dropping`);

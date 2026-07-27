@@ -9,6 +9,7 @@ import { tenantWhatsAppCreds } from '../lib/tenantContext.js';
 import { PLANS, isValidPlan, planEntitlements } from '../lib/plans.js';
 import { connectWhatsApp, embeddedSignupPublicConfig } from '../services/embeddedSignup.js';
 import { grantCredits } from '../lib/credits.js';
+import { TENANT_SELECT } from '../middleware/tenant.js';
 
 // Platform-owner (super_admin) routes for provisioning and managing tenants.
 // Mounted at /api/admin behind requireAuth + requireSuperAdmin.
@@ -344,7 +345,15 @@ router.put(
 router.post(
   '/tenants/:id/verify-credentials',
   asyncHandler(async (req, res) => {
-    const tenant = await prisma.tenant.findUnique({ where: { id: req.params.id } });
+    // Explicit projection (schema-drift hardening — see middleware/tenant.js
+    // TENANT_SELECT). Avoids select-all requesting a declared-but-unmigrated
+    // column (e.g. Tenant.waPin, migration 3_tenant_wa_pin) and 500ing. This
+    // handler only needs the WhatsApp creds for checkToken(), which TENANT_SELECT
+    // covers (waTokenEnc/waPhoneNumberId/waBusinessAccountId/waApiVersion) and
+    // which deliberately excludes waPin. NOTE: the direct waPin lookup at :292
+    // (connect-tenant finalize) is intentionally left select-all — it needs waPin
+    // and is a separate owner-gated concern.
+    const tenant = await prisma.tenant.findUnique({ where: { id: req.params.id }, select: TENANT_SELECT });
     if (!tenant) return res.status(404).json({ error: 'Tenant not found' });
     res.json(await checkToken(tenantWhatsAppCreds(tenant)));
   })

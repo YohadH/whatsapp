@@ -7,6 +7,23 @@ import config from '../config/index.js';
 // routed through the trackable /r/:id redirect so clicks are counted per platform.
 const router = Router();
 
+// Explicit projection for the public bio page (schema-drift hardening — mirrors
+// the TENANT_SELECT rationale in middleware/tenant.js). A bare findUnique
+// select-all requests EVERY column declared in schema.prisma, so a column that
+// is declared but not yet migrated live (e.g. Tenant.waPin, migration
+// 3_tenant_wa_pin) makes Prisma throw P2022 and 500s this public page. This
+// route needs a DIFFERENT column set than TENANT_SELECT (bio/display fields, no
+// WhatsApp creds), so it lists only what renderBio() actually reads. All fields
+// below are in migration 0_init (verified live); waPin is deliberately excluded.
+export const BIO_SELECT = {
+  id: true,
+  status: true,
+  name: true,
+  displayName: true,
+  bioTitle: true,
+  bioSubtitle: true,
+};
+
 const escapeHtml = (s = '') =>
   String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -86,7 +103,7 @@ async function renderBio(req, res, tenant) {
 
 // Per-tenant bio page.
 router.get('/l/:slug', async (req, res) => {
-  const tenant = await prisma.tenant.findUnique({ where: { slug: req.params.slug } });
+  const tenant = await prisma.tenant.findUnique({ where: { slug: req.params.slug }, select: BIO_SELECT });
   if (!tenant || tenant.status === 'suspended') return res.status(404).send('Not found');
   return renderBio(req, res, tenant);
 });
@@ -94,7 +111,7 @@ router.get('/l/:slug', async (req, res) => {
 // Back-compat: bare /l resolves to the single tenant if there's exactly one
 // (single-business deployments), else 404.
 router.get('/l', async (req, res) => {
-  const tenants = await prisma.tenant.findMany({ take: 2 });
+  const tenants = await prisma.tenant.findMany({ take: 2, select: BIO_SELECT });
   if (tenants.length !== 1) return res.status(404).send('Not found');
   return renderBio(req, res, tenants[0]);
 });

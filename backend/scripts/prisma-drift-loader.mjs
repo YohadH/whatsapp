@@ -35,15 +35,36 @@ function p2022() {
   err.meta = { column: 'Tenant.' + PHANTOM_COLUMN };
   return err;
 }
+// Shared drift semantics for any read: no select => SELECT * => asks for the
+// phantom (unmigrated) column => P2022; an explicit select that lists the phantom
+// also throws; an explicit select that omits it returns only the projected cols.
+function projectOrThrow(args = {}) {
+  const select = args && args.select;
+  if (!select) throw p2022();               // SELECT * → asks for phantom col
+  if (select[PHANTOM_COLUMN]) throw p2022(); // explicit but lists phantom
+  const out = {};
+  for (const k of Object.keys(select)) if (select[k]) out[k] = LIVE_ROW[k];
+  return out;
+}
 const prisma = {
   tenant: {
     async findUnique(args = {}) {
-      const select = args && args.select;
-      if (!select) throw p2022();               // SELECT * → asks for phantom col
-      if (select[PHANTOM_COLUMN]) throw p2022(); // explicit but lists phantom
-      const out = {};
-      for (const k of Object.keys(select)) if (select[k]) out[k] = LIVE_ROW[k];
-      return out;
+      return projectOrThrow(args);
+    },
+    async findFirst(args = {}) {
+      return projectOrThrow(args);
+    },
+    async findMany(args = {}) {
+      // Mirrors the same drift behavior for the list path (bio.js bare /l).
+      return [projectOrThrow(args)];
+    },
+  },
+  // Minimal Link model so bio.js renderBio() can complete over HTTP once its
+  // Tenant lookup survives the drift. Links are NOT part of the drift class
+  // (no Tenant column involved) — this just lets the end-to-end render finish.
+  link: {
+    async findMany() {
+      return [];
     },
   },
 };
