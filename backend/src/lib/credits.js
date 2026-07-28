@@ -169,20 +169,22 @@ export async function chargeAiCredit({
     });
     return { charged: true, windowOpened: true, state: creditsState(t) };
   }, {
-    // POOL/CONTENTION SAFETY: production runs Supabase's pgbouncer transaction pooler
-    // with connection_limit=1 per Prisma instance (the recommended serverless config).
-    // This is an INTERACTIVE $transaction, so it holds that single pooled connection for
-    // its whole (short: 2-4 fast statements) lifetime. Two genuinely simultaneous charges
-    // on the SAME instance — a WhatsApp webhook retry landing next to the original, or a
-    // customer double-tapping send — would otherwise queue for the one connection and hit
-    // Prisma's default 2s maxWait, throwing P2028 ("Unable to start a transaction in the
-    // given time") and DROPPING a reply in prod. We raise maxWait so the second charge
-    // waits for the connection to free (~ms hold time) instead of erroring; `timeout` caps
-    // pathological execution so a wedged statement can't pin the pooled connection forever.
-    // This changes NOTHING about the atomic window-flip semantics — of N concurrent callers
-    // still exactly one wins the window and charges; the others serialize and return free.
-    maxWait: 15000,
-    timeout: 20000,
+    // POOL/CONTENTION SAFETY (defense-in-depth). The REAL fix for pool starvation is the
+    // pool SIZE: DATABASE_URL now carries connection_limit=10 (was 1), so distinct
+    // $transaction call sites across the app (this charge, the payment webhook, admin
+    // mark-paid, flows reorder) each get their OWN pooled connection and no longer
+    // head-of-line-block each other. See scripts/pool-contention.test.mjs, which proves
+    // 1 slow holder starved 4/4 sibling txns at connection_limit=1 and 0/4 at 10.
+    // These per-transaction options are a MODEST cushion ON TOP of that correctly-sized
+    // pool — not a substitute for it: maxWait gives a little burst tolerance above
+    // Prisma's 2s default if the pool is momentarily saturated (>10 concurrent txns),
+    // and timeout caps a pathologically wedged statement so it can't pin a connection.
+    // They are deliberately right-sized (not the old 15s/20s band-aid from commit 87b7c8c,
+    // which — with a size-1 pool — could itself hold the sole connection for up to 20s and
+    // starve every other site). This changes NOTHING about the atomic window-flip
+    // semantics — of N concurrent callers exactly one wins the window and charges.
+    maxWait: 5000,
+    timeout: 10000,
   }).catch((e) => {
     // OutOfCreditsError = a window would have opened but there were no credits. The txn
     // (including the window flip) rolled back. Signal out-of-credits to the caller.
