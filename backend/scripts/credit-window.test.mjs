@@ -75,7 +75,7 @@ async function main() {
     // ── CASE 2: a reply AFTER the window expires → +1 credit (2 total) ──────────
     const afterExpiry = new Date(t0.getTime() + CONVERSATION_WINDOW_MS + 60 * 1000); // 24h + 1min later
     const r6 = await chargeAiCredit({ conversationId: conv.id, tenantId: tenant.id, now: afterExpiry });
-    check('CASE 2 — reply after window expiry opens a new window and charges', r6.charged === true && r6.windowOpened === true);
+    check('CASE 2 — reply after window expiry opens a new window and charges', r6.charged === true && r6.windowOpen === true);
     const d2 = await debits(tenant.id);
     check('CASE 2 — 2 debit rows total across the two windows', d2 === 2, `debits=${d2}`);
     // A follow-up inside the SECOND window is free again.

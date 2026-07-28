@@ -57,10 +57,10 @@ export async function hasCredits(tenantId) {
 // already has an open (non-expired) window, this is a free follow-up reply — no charge,
 // no ledger row — and we return { charged: false, windowOpen: true, ... }.
 //
-// Return shape:
-//   { charged: true,  windowOpened: true,  state }  — a new window opened and 1 credit spent
-//   { charged: false, windowOpen: true,    state }  — inside an already-open window, free
-//   { charged: false, windowOpen: false,   state: null } — a window WOULD open but there were
+// Return shape (the `windowOpen` key is consistent across ALL branches):
+//   { charged: true,  windowOpen: true,  state }  — a new window opened and 1 credit spent
+//   { charged: false, windowOpen: true,  state }  — inside an already-open window, free
+//   { charged: false, windowOpen: false, state: null } — a window WOULD open but there were
 //                                                            no credits to spend (caller gated
 //                                                            on hasCredits(); treat as out-of-credits)
 //
@@ -167,7 +167,7 @@ export async function chargeAiCredit({
       where: { id: tenantId },
       select: { monthlyMessageLimit: true, creditsUsedThisPeriod: true, purchasedCredits: true },
     });
-    return { charged: true, windowOpened: true, state: creditsState(t) };
+    return { charged: true, windowOpen: true, state: creditsState(t) };
   }, {
     // POOL/CONTENTION SAFETY (defense-in-depth). The REAL fix for pool starvation is the
     // pool SIZE: DATABASE_URL now carries connection_limit=10 (was 1), so distinct
