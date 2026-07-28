@@ -2,6 +2,7 @@ import { Router } from 'express';
 import prisma from '../lib/prisma.js';
 import { asyncHandler } from '../middleware/error.js';
 import { trackEvent, EVENTS } from '../services/analytics.js';
+import { notifyOwnerHandoff } from '../services/handoffNotify.js';
 
 const router = Router();
 
@@ -107,8 +108,8 @@ router.post(
   '/:id/assign-human',
   asyncHandler(async (req, res) => {
     const { assignedTo } = req.body || {};
-    if (!(await ownedConversation(req.params.id, req.tenantId)))
-      return res.status(404).json({ error: 'Conversation not found' });
+    const existing = await ownedConversation(req.params.id, req.tenantId);
+    if (!existing) return res.status(404).json({ error: 'Conversation not found' });
     const conversation = await prisma.conversation.update({
       where: { id: req.params.id },
       data: { needsHuman: true, status: 'needs_human', assignedTo: assignedTo || req.user?.email || 'human' },
@@ -119,6 +120,13 @@ router.post(
       customerId: conversation.customerId,
       metadata: { assignedTo: conversation.assignedTo, by: 'admin' },
     });
+    // Owner handoff alert — only on the false→true edge (§2.4). Best-effort.
+    if (!existing.needsHuman) {
+      const customer = await prisma.customer
+        .findUnique({ where: { id: conversation.customerId }, select: { name: true, phone: true } })
+        .catch(() => null);
+      await notifyOwnerHandoff({ tenant: req.tenant, conversation, customer });
+    }
     res.json(conversation);
   })
 );

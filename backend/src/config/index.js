@@ -93,6 +93,17 @@ const config = {
     graphVersion: process.env.META_GRAPH_VERSION || process.env.WHATSAPP_API_VERSION || 'v21.0',
   },
 
+  // Owner handoff notification (system-gap-analysis §2.4): when a conversation's
+  // needsHuman flips true, WhatsApp the business owner's own number with context.
+  // notifyPhone is the owner's E.164 number (digits only, e.g. 972501234567).
+  // Leave empty to disable the alert (the DB flag + dashboard still work).
+  // adminBaseUrl builds the "open conversation" link; falls back to the first
+  // CORS origin (the admin SPA) when unset.
+  handoff: {
+    notifyPhone: (process.env.HANDOFF_NOTIFY_PHONE || '').replace(/[^\d]/g, ''),
+    adminBaseUrl: process.env.ADMIN_APP_URL || '',
+  },
+
   // Error tracking (no-op unless SENTRY_DSN is set).
   sentry: {
     dsn: process.env.SENTRY_DSN || '',

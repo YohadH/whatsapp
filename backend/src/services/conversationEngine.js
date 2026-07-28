@@ -6,6 +6,7 @@ import { tenantWhatsAppCreds } from '../lib/tenantContext.js';
 import { hasCredits, chargeAiCredit, markLowCreditNudge } from '../lib/credits.js';
 import { trackEvent, EVENTS } from './analytics.js';
 import { computeLeadScore } from './leadScore.js';
+import { notifyOwnerHandoff } from './handoffNotify.js';
 
 // A URL-based image is downloaded by WhatsApp before delivery, so it can lag
 // behind a small voice note sent right after. This short pause (only when a
@@ -275,6 +276,10 @@ export async function handleIncomingMessage({ tenant, phone, text, name, rawPayl
   });
   agentResponse.lead_score = leadScore;
 
+  // Capture the pre-update handoff state so we can alert the owner exactly on the
+  // false→true edge below (not on every message while it stays true). §2.4.
+  const wasNeedsHuman = conversation.needsHuman;
+
   conversation = await prisma.conversation.update({
     where: { id: conversation.id },
     data: {
@@ -289,6 +294,18 @@ export async function handleIncomingMessage({ tenant, phone, text, name, rawPayl
       lastActivityAt: new Date(),
     },
   });
+
+  // Owner handoff notification (§2.4): the moment a conversation newly needs a
+  // human, WhatsApp the business owner with context. Fire only on the false→true
+  // edge; best-effort (never breaks the reply pipeline). lastMessage was just set
+  // to this inbound `text` above, so pass a conversation view that carries it.
+  if (!wasNeedsHuman && agentResponse.needs_human) {
+    await notifyOwnerHandoff({
+      tenant,
+      conversation: { ...conversation, whatsappPhone: phone, lastMessage: text },
+      customer: { name: customer.name, phone: customer.phone || phone },
+    });
+  }
 
   // 10) Save agent reply + send via WhatsApp. Skip entirely when there's nothing
   // to send — e.g. a flow that completes with no closing message and no link.
