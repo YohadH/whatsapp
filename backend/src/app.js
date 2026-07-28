@@ -28,7 +28,7 @@ import adminRoutes from './routes/admin.js';
 import settingsRoutes from './routes/settings.js';
 import creditsRoutes from './routes/credits.js';
 import paymentsRoutes from './routes/payments.js';
-import integrationsRoutes from './routes/integrations.js';
+import integrationsRoutes, { googleCallbackRouter } from './routes/integrations.js';
 
 const app = express();
 
@@ -77,6 +77,10 @@ app.use('/api/auth', authRoutes); // /login public, /me self-guards
 app.use('/api/whatsapp/simulate', authLimiter);
 app.use('/api/whatsapp', whatsappRoutes); // webhook (public) + simulator (auth-gated inside)
 app.use('/api/payments', paymentsRoutes); // PayPlus callback (public, signature-verified) + browser return
+// Google OAuth callback is a PUBLIC top-level browser redirect from Google (no auth
+// header) — mounted here, BEFORE the auth'd /api/integrations, so it isn't bounced to
+// 401. It resolves the tenant from the single-use state nonce, not a session.
+app.use('/api/integrations', googleCallbackRouter);
 app.use('/', redirectRoutes); // /r/:linkId click tracking
 app.use('/', legalRoutes); // /privacy + /terms (required by Meta for app token)
 app.use('/', bioRoutes); // /l/:slug public link page ("link tree")

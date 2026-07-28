@@ -14,11 +14,20 @@
 //   OAUTH + PERSISTENCE (flag ON, columns live)
 //     4. Super-admin flips the flag ON (real raw-SQL UPDATE via admin logic).
 //     5. GET /connect builds a Google consent URL with the right client_id, redirect,
-//        scopes, offline access + state=tenantId. (real buildAuthUrl)
-//     6. GET /callback exchanges the code (Google HTTP boundary MOCKED) → tokens are
-//        ENCRYPTED at rest (AES-256-GCM) and persisted; the ciphertext is NOT the
-//        plaintext token and round-trips back to the original. (real crypto)
-//     7. State mismatch on /callback → 403 (replay guard).
+//        scopes, offline access + a RANDOM single-use state nonce (NOT the raw
+//        tenantId), persisted server-side bound to this tenant. (real buildAuthUrl +
+//        createOAuthState)
+//   STATE-NONCE SECURITY — drives the REAL public (no-auth) /callback + real
+//   server-side state validation (this is the gap the reviewer found: the old
+//   harness pinned req.tenantId and never hit requireAuth-absence or state lookup):
+//     D1. A VALID single-use state resolves to the correct tenant and completes;
+//         tokens are ENCRYPTED at rest (AES-256-GCM), round-trip to the original.
+//     D2. A MISSING / UNKNOWN / EXPIRED state → 400 invalid_state (rejected).
+//     D3. A REUSED (replayed) state → the 2nd hit is rejected (single-use).
+//     D4. CROSS-TENANT: a state minted for tenant A lands tokens ONLY on A, never on
+//         B; a bare tenantId-as-state (forged) is rejected as unknown.
+//     The callback runs on a PUBLIC router with NO Authorization header — proving it
+//     no longer bounces to 401 (the original bug) yet is still tenant-safe.
 //   SERVICE LAYER (flag ON + connected; Google API MOCKED)
 //     8. createCalendarEvent builds the correct events.insert request + returns the id.
 //     9. checkAvailability maps a freebusy response → { busy, free:false }.
@@ -56,18 +65,31 @@ process.env.GOOGLE_REDIRECT_URI = 'https://app.example.test/api/integrations/goo
 const TENANT_ID = 'tnt_google_test';
 
 // Import AFTER env is set so config picks it up (modules are stubbed by the loader).
-const integrationsRouter = (await import('../src/routes/integrations.js')).default;
+const integrationsMod = await import('../src/routes/integrations.js');
+const integrationsRouter = integrationsMod.default;
+const googleCallbackRouter = integrationsMod.googleCallbackRouter;
 const svc = await import('../src/services/googleIntegration.js');
 const { decryptSecret } = await import('../src/lib/crypto.js');
 const G = globalThis.__G; // the in-memory store from the loader
 
-// Build a tiny app: fake auth/withTenant that pins req.tenantId (the real middleware
-// is auth/JWT which is out of scope here — we test the router + service + gate logic).
-function makeApp() {
+// Build a tiny app that MIRRORS app.js's real mount order so the callback is driven
+// through the SAME chain a real Google redirect hits — this is the gap the reviewer
+// found: the old harness pinned req.tenantId directly and never exercised the public
+// (no-auth) callback + real state validation. Now:
+//   1. the PUBLIC googleCallbackRouter is mounted FIRST at /api/integrations, with NO
+//      fake-auth middleware in front of it — proving /callback needs no Bearer/tenant.
+//   2. the auth'd router is mounted AFTER, behind a fake-auth middleware that pins
+//      req.tenantId (standing in for requireAuth+withTenant) — used by /connect etc.
+// The fake-auth middleware deliberately does NOT run for the callback (Express hits
+// the earlier public router first and the handler ends the response), so if /callback
+// ever depended on req.tenantId it would break here.
+function makeApp(tenantIdForAuthd = TENANT_ID) {
   const app = express();
   app.use(express.json());
-  app.use((req, _res, next) => { req.tenantId = TENANT_ID; req.tenant = { id: TENANT_ID }; next(); });
-  app.use('/api/integrations', integrationsRouter);
+  // Public callback FIRST (no auth), exactly like app.js.
+  app.use('/api/integrations', googleCallbackRouter);
+  // Auth'd router SECOND, behind the fake requireAuth+withTenant.
+  app.use('/api/integrations', (req, _res, next) => { req.tenantId = tenantIdForAuthd; req.tenant = { id: tenantIdForAuthd }; next(); }, integrationsRouter);
   return app;
 }
 
@@ -133,24 +155,89 @@ async function main() {
   check('5 — client_id matches config', u.searchParams.get('client_id') === process.env.GOOGLE_CLIENT_ID);
   check('5 — redirect_uri matches config', u.searchParams.get('redirect_uri') === process.env.GOOGLE_REDIRECT_URI);
   check('5 — access_type=offline (refresh token)', u.searchParams.get('access_type') === 'offline');
-  check('5 — state carries the tenantId', u.searchParams.get('state') === TENANT_ID);
+  // SECURITY: state is now a random single-use nonce, NOT the raw tenantId (which is
+  // attacker-observable/replayable). It must NOT equal the tenantId and must be a
+  // real, live nonce bound server-side to this tenant.
+  const issuedState = u.searchParams.get('state') || '';
+  check('5 — state is a random nonce, NOT the raw tenantId',
+    issuedState.length >= 32 && issuedState !== TENANT_ID, `state=${issuedState}`);
+  check('5 — issued state is persisted server-side, bound to this tenant',
+    G.oauthStates.get(issuedState)?.tenantId === TENANT_ID);
   const scope = u.searchParams.get('scope') || '';
   check('5 — scope requests Calendar events + Gmail send',
     /calendar\.events/.test(scope) && /gmail\.send/.test(scope), `scope=${scope}`);
 
-  // ── 7: state mismatch on callback → 403 ─────────────────────────────────────
-  r = await request(app, 'GET', `/api/integrations/google/callback?code=GOOD&state=some_other_tenant`);
-  check('7 — callback with mismatched state → 403', r.status === 403, `status=${r.status}`);
+  // ═══════════════════════════════════════════════════════════════════════════
+  // NEW DISCRIMINATING CASES (close the reviewer's gap: drive the REAL route chain —
+  // the PUBLIC callback with NO auth header + REAL server-side state validation).
+  // ═══════════════════════════════════════════════════════════════════════════
 
-  // ── 6: callback exchanges code (Google HTTP MOCKED) + encrypts + persists ────
-  r = await request(app, 'GET', `/api/integrations/google/callback?code=GOOD&state=${TENANT_ID}`);
-  check('6 — callback exchanges code → connected:true + resolved email',
+  // ── D1: a VALID single-use state resolves to the correct tenant + completes ──
+  // Mint a fresh state via /connect (real), then hit the PUBLIC /callback (no auth).
+  let cr = await request(app, 'GET', '/api/integrations/google/connect');
+  const validState = new URL(cr.json.url).searchParams.get('state');
+  r = await request(app, 'GET', `/api/integrations/google/callback?code=GOOD&state=${validState}`);
+  check('D1 — valid single-use state → callback completes (connected:true + email)',
     r.status === 200 && r.json.connected === true && r.json.email === 'owner@example-tenant.com', `${JSON.stringify(r.json)}`);
   const stored = G.tenants.get(TENANT_ID).googleTokensEnc;
-  check('6 — tokens are STORED encrypted (v1: AES-GCM envelope)', typeof stored === 'string' && stored.startsWith('v1:'));
-  check('6 — ciphertext is NOT the plaintext token', !stored.includes('ya29.mock-access') && !stored.includes('1//mock-refresh'));
+  check('D1 — tokens STORED encrypted on the RESOLVED tenant (v1: AES-GCM envelope)',
+    typeof stored === 'string' && stored.startsWith('v1:'));
+  check('D1 — ciphertext is NOT the plaintext token', !stored.includes('ya29.mock-access') && !stored.includes('1//mock-refresh'));
   const roundTrip = JSON.parse(decryptSecret(stored));
-  check('6 — decrypts back to the original token set', roundTrip.access_token === 'ya29.mock-access' && roundTrip.refresh_token === '1//mock-refresh');
+  check('D1 — decrypts back to the original token set', roundTrip.access_token === 'ya29.mock-access' && roundTrip.refresh_token === '1//mock-refresh');
+
+  // ── D2: missing / unknown / expired state → rejected (400 invalid_state) ─────
+  r = await request(app, 'GET', `/api/integrations/google/callback?code=GOOD`); // no state at all
+  check('D2 — MISSING state → 400 invalid_state', r.status === 400 && r.json.code === 'invalid_state', `${r.status} ${JSON.stringify(r.json)}`);
+  r = await request(app, 'GET', `/api/integrations/google/callback?code=GOOD&state=totally_made_up_nonce_xyz`);
+  check('D2 — UNKNOWN state → 400 invalid_state', r.status === 400 && r.json.code === 'invalid_state', `${r.status} ${JSON.stringify(r.json)}`);
+  // Expired: inject a state whose expiry is in the past — consume must reject it.
+  const expiredState = 'expired_nonce_' + Date.now();
+  G.oauthStates.set(expiredState, { tenantId: TENANT_ID, expiresAt: new Date(Date.now() - 1000) });
+  r = await request(app, 'GET', `/api/integrations/google/callback?code=GOOD&state=${expiredState}`);
+  check('D2 — EXPIRED state → 400 invalid_state', r.status === 400 && r.json.code === 'invalid_state', `${r.status} ${JSON.stringify(r.json)}`);
+  check('D2 — expired state is GC-deleted (not left behind)', !G.oauthStates.has(expiredState));
+
+  // ── D3: a REUSED (replayed) state is rejected on the 2nd attempt ─────────────
+  cr = await request(app, 'GET', '/api/integrations/google/connect');
+  const replayState = new URL(cr.json.url).searchParams.get('state');
+  r = await request(app, 'GET', `/api/integrations/google/callback?code=GOOD&state=${replayState}`);
+  check('D3 — replay: first use of state succeeds', r.status === 200 && r.json.connected === true, `${r.status} ${JSON.stringify(r.json)}`);
+  r = await request(app, 'GET', `/api/integrations/google/callback?code=GOOD&state=${replayState}`);
+  check('D3 — replay: SECOND use of the same state → 400 invalid_state (single-use)',
+    r.status === 400 && r.json.code === 'invalid_state', `${r.status} ${JSON.stringify(r.json)}`);
+
+  // ── D4: cross-tenant — a state minted for tenant A cannot write into tenant B ─
+  // Tenant B is a separate, also-enabled tenant. We build an app whose AUTH'D router
+  // pins tenant A (so /connect mints A's state), then fire that state at the PUBLIC
+  // callback. The callback must resolve the tokens to A (the state's true owner) — it
+  // must be IMPOSSIBLE to land A's Google account on B just by holding A's state.
+  const TENANT_A = TENANT_ID;
+  const TENANT_B = 'tnt_google_test_B';
+  G.migrated = true;
+  G.tenants.set(TENANT_B, { googleIntegrationEnabled: true }); // B is enabled but has NO tokens
+  // Clear A's tokens so we can prove the write lands on A (its state), never on B.
+  const a0 = G.tenants.get(TENANT_A); a0.googleTokensEnc = null; a0.googleConnectedEmail = null;
+  const appA = makeApp(TENANT_A);
+  cr = await request(appA, 'GET', '/api/integrations/google/connect'); // A mints A's state
+  const stateForA = new URL(cr.json.url).searchParams.get('state');
+  check('D4 — state minted under A is bound to A server-side (not to B)',
+    G.oauthStates.get(stateForA)?.tenantId === TENANT_A);
+  // Fire A's state at the public callback (no auth — anyone could POST this URL).
+  r = await request(appA, 'GET', `/api/integrations/google/callback?code=GOOD&state=${stateForA}`);
+  check('D4 — callback with A-owned state completes for A', r.status === 200 && r.json.connected === true, `${r.status} ${JSON.stringify(r.json)}`);
+  check('D4 — tokens landed on tenant A (state\'s true owner)', typeof G.tenants.get(TENANT_A).googleTokensEnc === 'string');
+  check('D4 — tenant B was NOT written (no cross-tenant token planting)',
+    !G.tenants.get(TENANT_B).googleTokensEnc, `B tokens=${G.tenants.get(TENANT_B).googleTokensEnc}`);
+  // And a forged/guessed state that claims B but was never issued is simply unknown.
+  r = await request(appA, 'GET', `/api/integrations/google/callback?code=GOOD&state=${TENANT_B}`);
+  check('D4 — a bare tenantId-as-state (forged) is rejected → 400 invalid_state',
+    r.status === 400 && r.json.code === 'invalid_state', `${r.status} ${JSON.stringify(r.json)}`);
+
+  // Re-establish A's connection for the remaining service-layer cases below.
+  cr = await request(app, 'GET', '/api/integrations/google/connect');
+  const reState = new URL(cr.json.url).searchParams.get('state');
+  await request(app, 'GET', `/api/integrations/google/callback?code=GOOD&state=${reState}`);
 
   // ── 8: createCalendarEvent (service, Google API MOCKED) ─────────────────────
   r = await request(app, 'POST', '/api/integrations/google/calendar/events',

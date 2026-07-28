@@ -9,6 +9,8 @@ import {
   disconnectTenantGoogle,
   createCalendarEvent,
   checkAvailability,
+  createOAuthState,
+  consumeOAuthState,
 } from '../services/googleIntegration.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -62,15 +64,19 @@ router.get(
 );
 
 // GET /api/integrations/google/connect → redirect to Google's consent screen.
-// Behind the per-tenant flag. The tenantId travels in `state` so the callback can
-// attach the tokens to the right tenant.
+// Behind the per-tenant flag (requireAuth+withTenant give us a trusted req.tenantId).
+// We mint a random, single-use, short-TTL `state` nonce bound SERVER-SIDE to this
+// tenant (createOAuthState) and hand THAT to Google — never the raw tenantId. The
+// public /callback resolves the nonce back to this tenant, so a forged/replayed
+// state can never plant tokens into another tenant's row.
 router.get(
   '/google/connect',
   asyncHandler(async (req, res) => {
-    const state = await requireGoogleEnabled(req, res);
-    if (!state) return; // response already sent by the gate
+    const gate = await requireGoogleEnabled(req, res);
+    if (!gate) return; // response already sent by the gate
 
-    const url = buildAuthUrl({ tenantId: req.tenantId, state: req.tenantId });
+    const state = await createOAuthState(req.tenantId);
+    const url = buildAuthUrl({ tenantId: req.tenantId, state });
     // Support both a JSON (SPA fetch) and a redirect (direct browser) caller.
     if (req.query.json === '1' || (req.headers.accept || '').includes('application/json')) {
       return res.json({ url });
@@ -79,29 +85,12 @@ router.get(
   })
 );
 
-// GET /api/integrations/google/callback → exchange the code for tokens + persist.
-// Google redirects the browser here with ?code=...&state=<tenantId>. This runs
-// under requireAuth + withTenant like the rest, so req.tenantId is trusted; we
-// additionally assert the OAuth `state` matches the authenticated tenant to guard
-// against a code being replayed against a different tenant.
-router.get(
-  '/google/callback',
-  asyncHandler(async (req, res) => {
-    const gate = await requireGoogleEnabled(req, res);
-    if (!gate) return;
-
-    const { code, state, error } = req.query;
-    if (error) {
-      return res.status(400).json({ error: `Google authorization failed: ${error}` });
-    }
-    if (state && state !== req.tenantId) {
-      return res.status(403).json({ error: 'OAuth state does not match the authenticated tenant.' });
-    }
-
-    const { email } = await exchangeCodeAndStore({ tenantId: req.tenantId, code });
-    res.json({ connected: true, email });
-  })
-);
+// NOTE: GET /google/callback is intentionally NOT defined on THIS (auth-gated)
+// router. Google's real OAuth redirect is a plain top-level browser GET with no
+// Authorization header, so it must be a PUBLIC route — see googleCallbackRouter
+// below, mounted before the auth'd /api/integrations in app.js (mirrors the public
+// payments /return precedent). It resolves the tenant from the state nonce, not
+// from an authenticated session.
 
 // POST /api/integrations/google/disconnect → clear stored tokens for this tenant.
 router.post(
@@ -148,11 +137,73 @@ router.post(
 // only until then. (WA-DEV-GOOGLE-READY: infrastructure, not a live feature.)
 
 // Translate GoogleIntegrationError → its HTTP status (else the generic 500 path).
-router.use((err, req, res, next) => {
+function googleErrorTranslator(err, req, res, next) {
   if (err && err.name === 'GoogleIntegrationError') {
     return res.status(err.status || 400).json({ error: err.message, code: err.code });
   }
   next(err);
-});
+}
+router.use(googleErrorTranslator);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PUBLIC callback router — mounted at /api/integrations WITHOUT requireAuth (like
+// the payments /return route), BEFORE the auth'd router in app.js. This is the URL
+// Google redirects the user's browser to after consent, which is a plain top-level
+// GET with NO Authorization header — so it CANNOT sit behind requireAuth (that was
+// the bug: every real consent bounced to 401). Instead of trusting a session, it
+// resolves the tenant SERVER-SIDE from the single-use `state` nonce minted at
+// /connect (consumeOAuthState), which is deleted on first use → replay-proof and
+// cannot be forged to target another tenant.
+// ─────────────────────────────────────────────────────────────────────────────
+export const googleCallbackRouter = Router();
+
+// GET /api/integrations/google/callback → exchange the code for tokens + persist.
+// Google redirects here with ?code=...&state=<nonce>. Flow:
+//   1. platform configured? (else 503 not_configured)
+//   2. resolve state → tenantId (single-use consume; reject if missing/unknown/
+//      expired/reused). NEVER trust a tenantId asserted in state.
+//   3. that tenant's add-on flag ON? (else 403 not_enabled — a state for a tenant
+//      whose add-on was turned off is not honored)
+//   4. exchange the code and store the encrypted tokens on THAT tenant.
+googleCallbackRouter.get(
+  '/google/callback',
+  asyncHandler(async (req, res) => {
+    if (!googlePlatformConfigured()) {
+      return res.status(503).json({
+        error: 'Google integration is not configured on the server.',
+        code: 'not_configured',
+      });
+    }
+
+    const { code, state, error } = req.query;
+    if (error) {
+      return res.status(400).json({ error: `Google authorization failed: ${error}` });
+    }
+
+    // Resolve + consume the server-side nonce. This is the ONLY source of the tenant
+    // identity — never a client-asserted value. Single-use: a replay finds nothing.
+    const tenantId = await consumeOAuthState(state);
+    if (!tenantId) {
+      return res.status(400).json({
+        error: 'Invalid, expired, or already-used OAuth state.',
+        code: 'invalid_state',
+      });
+    }
+
+    // Re-check the add-on flag for the RESOLVED tenant (a nonce is not a license to
+    // connect if the add-on was disabled between /connect and the callback).
+    const tstate = await getTenantGoogleState(tenantId);
+    if (!tstate.enabled) {
+      return res.status(403).json({
+        error: 'Google integration is not enabled for this account (paid add-on).',
+        code: 'not_enabled',
+      });
+    }
+
+    const { email } = await exchangeCodeAndStore({ tenantId, code });
+    res.json({ connected: true, email });
+  })
+);
+googleCallbackRouter.use(googleErrorTranslator);
 
 export default router;

@@ -27,10 +27,15 @@
 // same AES-256-GCM helper as the WhatsApp token (lib/crypto.js), keyed by
 // CREDENTIALS_ENC_KEY. It is never returned to the client and never logged.
 // ─────────────────────────────────────────────────────────────────────────────
+import crypto from 'node:crypto';
 import { google } from 'googleapis';
 import prisma from '../lib/prisma.js';
 import { encryptSecret, decryptSecret } from '../lib/crypto.js';
 import config from '../config/index.js';
+
+// How long an issued OAuth `state` nonce is valid for. The user has this long to
+// complete Google's consent screen; after that the state is rejected as expired.
+const OAUTH_STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 // A structured error the routes can translate to an HTTP status + clear message.
 export class GoogleIntegrationError extends Error {
@@ -52,6 +57,20 @@ function isColumnMissing(err) {
     err?.code === '42703' ||
     /column .*does not exist/i.test(msg) ||
     /does not exist in the current database/i.test(msg)
+  );
+}
+
+// True when the Postgres error is "relation/table does not exist" — i.e. the
+// 5_google_integration migration (which now also creates the GoogleOAuthState
+// table) has not been applied to this DB yet. Same graceful-degrade intent as
+// isColumnMissing (AP-T71): treat as "feature not live" rather than a 500.
+function isTableMissing(err) {
+  const msg = String(err?.message || '');
+  return (
+    err?.code === 'P2021' ||
+    err?.code === '42P01' ||
+    /relation .*does not exist/i.test(msg) ||
+    /table .*does not exist/i.test(msg)
   );
 }
 
@@ -118,6 +137,64 @@ export async function disconnectTenantGoogle(tenantId) {
     return { disconnected: true };
   } catch (err) {
     if (isColumnMissing(err)) return { disconnected: false, notMigrated: true };
+    throw err;
+  }
+}
+
+// ── OAuth state nonce (CSRF + server-side tenant binding) ────────────────────
+// The OAuth `state` param is attacker-observable and replayable, so we NEVER trust
+// a tenantId carried inside it. Instead /connect mints a random, single-use,
+// short-TTL nonce here, bound SERVER-SIDE to the initiating tenantId; the public
+// /callback resolves the incoming state back to its tenant via consumeOAuthState()
+// (which deletes the row on first hit → replay-proof). All raw SQL + drift-safe.
+
+// Create a fresh single-use state nonce bound to a tenant. Returns the state string.
+// Requires the 5_google_integration migration applied (GoogleOAuthState table live);
+// surfaces the not-migrated case as a clear 503 like the other write paths.
+export async function createOAuthState(tenantId) {
+  if (!tenantId) throw new GoogleIntegrationError('Missing tenant for OAuth state', { status: 400 });
+  const state = crypto.randomBytes(32).toString('hex');
+  const expiresAt = new Date(Date.now() + OAUTH_STATE_TTL_MS);
+  try {
+    await prisma.$executeRaw`
+      INSERT INTO "GoogleOAuthState" ("state", "tenantId", "expiresAt")
+      VALUES (${state}, ${tenantId}, ${expiresAt})`;
+  } catch (err) {
+    if (isColumnMissing(err) || isTableMissing(err)) {
+      throw new GoogleIntegrationError(
+        'Google integration is not migrated on this database yet. Apply migration 5_google_integration first.',
+        { status: 503, code: 'not_migrated' }
+      );
+    }
+    throw err;
+  }
+  return state;
+}
+
+// Atomically consume a state nonce: DELETE the matching, unexpired row and RETURN
+// its tenantId in one statement — so the row is single-use (a replay finds nothing)
+// and there is no read-then-write TOCTOU window (AP-T72). Returns the tenantId on a
+// valid, unexpired, not-yet-consumed state; null for missing/unknown/expired/reused.
+export async function consumeOAuthState(state) {
+  if (!state || typeof state !== 'string') return null;
+  const now = new Date();
+  try {
+    const rows = await prisma.$queryRaw`
+      DELETE FROM "GoogleOAuthState"
+      WHERE "state" = ${state} AND "expiresAt" > ${now}
+      RETURNING "tenantId"`;
+    const tenantId = rows?.[0]?.tenantId || null;
+    // Best-effort GC of the reused/expired row for this state (keeps the table small);
+    // never fatal. A row that survived the WHERE (expired) is removed here so a later
+    // replay can't even distinguish "expired" from "unknown".
+    if (!tenantId) {
+      try {
+        await prisma.$executeRaw`DELETE FROM "GoogleOAuthState" WHERE "state" = ${state}`;
+      } catch { /* GC is best-effort */ }
+    }
+    return tenantId;
+  } catch (err) {
+    if (isColumnMissing(err) || isTableMissing(err)) return null; // feature not live → reject
     throw err;
   }
 }

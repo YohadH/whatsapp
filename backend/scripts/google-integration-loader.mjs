@@ -26,12 +26,19 @@ const PRISMA_STUB = `
 globalThis.__G = globalThis.__G || {
   migrated: false,           // simulate the live DB (columns NOT applied yet)
   tenants: new Map(),        // id -> { googleIntegrationEnabled, googleTokensEnc, googleConnectedEmail }
+  oauthStates: new Map(),    // state -> { tenantId, expiresAt } (GoogleOAuthState table)
 };
 const G = globalThis.__G;
+if (!G.oauthStates) G.oauthStates = new Map();
 
 function p2022(col) {
   const err = new Error('The column \`Tenant.' + col + '\` does not exist in the current database.');
   err.code = 'P2022';
+  return err;
+}
+function p2021(rel) {
+  const err = new Error('The table \`public.' + rel + '\` does not exist in the current database.');
+  err.code = 'P2021';
   return err;
 }
 // Reconstruct the SQL string from a tagged-template strings array.
@@ -47,10 +54,40 @@ const prisma = {
       if (!t) return [];
       return [{ enabled: !!t.googleIntegrationEnabled, tokensEnc: t.googleTokensEnc || null, email: t.googleConnectedEmail || null }];
     }
+    // consumeOAuthState: DELETE ... WHERE state=? AND expiresAt>now RETURNING tenantId
+    if (/DELETE\\s+FROM\\s+"GoogleOAuthState"/i.test(sql) && /RETURNING/i.test(sql)) {
+      if (!G.migrated) throw p2021('GoogleOAuthState');
+      const state = vals[0]; const now = vals[1];
+      const row = G.oauthStates.get(state);
+      if (!row) return [];
+      const nowMs = now instanceof Date ? now.getTime() : new Date(now).getTime();
+      const expMs = row.expiresAt instanceof Date ? row.expiresAt.getTime() : new Date(row.expiresAt).getTime();
+      if (expMs > nowMs) {
+        // valid + unexpired → consume (single-use) and return the tenant.
+        G.oauthStates.delete(state);
+        return [{ tenantId: row.tenantId }];
+      }
+      // expired: the WHERE excludes it → return nothing (the row stays for the GC delete).
+      return [];
+    }
     throw new Error('unexpected \$queryRaw: ' + sql);
   },
   async \$executeRaw(strings, ...vals) {
     const sql = sqlText(strings.raw || strings);
+    // createOAuthState: INSERT INTO "GoogleOAuthState" (state, tenantId, expiresAt)
+    if (/INSERT\\s+INTO\\s+"GoogleOAuthState"/i.test(sql)) {
+      if (!G.migrated) throw p2021('GoogleOAuthState');
+      const state = vals[0]; const tenantId = vals[1]; const expiresAt = vals[2];
+      G.oauthStates.set(state, { tenantId, expiresAt });
+      return 1;
+    }
+    // consumeOAuthState best-effort GC: DELETE FROM "GoogleOAuthState" WHERE state=?
+    if (/DELETE\\s+FROM\\s+"GoogleOAuthState"/i.test(sql)) {
+      if (!G.migrated) throw p2021('GoogleOAuthState');
+      const state = vals[0];
+      G.oauthStates.delete(state);
+      return 1;
+    }
     if (/UPDATE\\s+"Tenant"\\s+SET\\s+"googleIntegrationEnabled"/i.test(sql)) {
       if (!G.migrated) throw p2022('googleIntegrationEnabled');
       const enabled = vals[0]; const id = vals[1];

@@ -91,21 +91,22 @@ model Tenant {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  admins          AdminUser[]
-  customers       Customer[]
-  conversations   Conversation[]
-  messages        Message[]
-  flows           Flow[]
-  questions       FlowQuestion[]
-  answers         CustomerAnswer[]
-  links           Link[]
-  events          AnalyticsEvent[]
-  knowledgeBase   KnowledgeBase?
-  suppressed      SuppressedNumber[]
-  broadcasts      BroadcastJob[]
-  outboundSends   OutboundSend[]
-  creditTxns      CreditTransaction[]
-  creditPurchases CreditPurchase[]
+  admins            AdminUser[]
+  customers         Customer[]
+  conversations     Conversation[]
+  messages          Message[]
+  flows             Flow[]
+  questions         FlowQuestion[]
+  answers           CustomerAnswer[]
+  links             Link[]
+  events            AnalyticsEvent[]
+  knowledgeBase     KnowledgeBase?
+  suppressed        SuppressedNumber[]
+  broadcasts        BroadcastJob[]
+  outboundSends     OutboundSend[]
+  creditTxns        CreditTransaction[]
+  creditPurchases   CreditPurchase[]
+  googleOAuthStates GoogleOAuthState[]
 
   @@index([status])
 }
@@ -151,6 +152,29 @@ model CreditTransaction {
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Google OAuth state nonce (CSRF / tenant-binding for the OAuth handshake)
+// ─────────────────────────────────────────────────────────────
+// One short-lived, single-use row per initiated Connect. /connect creates a row
+// binding a random `state` value to the initiating tenantId (server-side); the
+// public /callback resolves the incoming ?state= back to that tenantId by looking
+// it up here — so the tenant identity is SERVER-VALIDATED, never trusted from the
+// attacker-observable OAuth state param. The row is DELETED on first use
+// (single-use → replay-proof) and ignored past `expiresAt` (short TTL). This is
+// what lets /callback be a public route (no requireAuth) while still binding the
+// callback to exactly the tenant that started the flow. Part of the same unapplied
+// 5_google_integration migration (add-on-gated; see services/googleIntegration.js).
+model GoogleOAuthState {
+  state     String   @id // random 32-byte hex nonce (the OAuth `state`)
+  tenantId  String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -224,8 +248,8 @@ model Conversation {
   // windowExpiresAt mark the currently-open window; a credit is charged only when an
   // AI reply OPENS a new window (windowExpiresAt null or in the past). See
   // lib/credits.js chargeAiCredit() and CREDITS_DESIGN.md.
-  windowStartedAt   DateTime?
-  windowExpiresAt   DateTime?
+  windowStartedAt DateTime?
+  windowExpiresAt DateTime?
 
   tenant   Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   customer Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
