@@ -1,10 +1,30 @@
 import prisma from './prisma.js';
 
-// AI credits — 1 credit = 1 AI-answered message. A tenant's monthly allotment is
-// `monthlyMessageLimit`, consumed via `creditsUsedThisPeriod` (reset each period by
-// the usage scheduler). Beyond that, a non-resetting `purchasedCredits` balance is
-// spent. Deterministic flow steps never cost a credit — only genuine LLM replies do.
+// AI credits — 1 credit = one handled CONVERSATION within a rolling 24-HOUR WINDOW
+// (NOT one credit per AI message). The FIRST AI-answered message that opens a new
+// window costs 1 credit; every later AI message inside that still-open window is
+// free. Once the window expires (24h after it opened), the next AI-answered message
+// starts a NEW window and costs a new credit. This mirrors WhatsApp's own 24-hour
+// conversation-session billing and makes cost predictable per customer/day.
+//
+// A tenant's monthly allotment is `monthlyMessageLimit`, consumed via
+// `creditsUsedThisPeriod` (reset each period by the usage scheduler). Beyond that, a
+// non-resetting `purchasedCredits` balance is spent. Deterministic flow steps never
+// cost a credit — only genuine LLM replies do, and only the one that opens a window.
 // See CREDITS_DESIGN.md.
+
+// The conversation-credit window length (24 hours) in milliseconds.
+export const CONVERSATION_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+// Internal sentinel: thrown inside chargeAiCredit()'s transaction to roll back the
+// window-open flip when there is no credit to spend, so an out-of-credits tenant never
+// gets a free 24h window opened on their behalf. Caught in the outer .catch().
+class OutOfCreditsError extends Error {
+  constructor() {
+    super('out_of_credits');
+    this.name = 'OutOfCreditsError';
+  }
+}
 
 // Derive the credit position from a tenant row (or the minimal fields below).
 export function creditsState(tenant) {
@@ -31,29 +51,88 @@ export async function hasCredits(tenantId) {
   return creditsState(t).available > 0;
 }
 
-// Charge exactly one credit for an AI reply and record a ledger entry. Consumes the
-// monthly allotment first, then the purchased balance. Returns the new credit state
-// (or null if there was nothing to charge — the caller should have gated on hasCredits()).
+// Charge (at most) one credit for a handled conversation and record a ledger entry.
+// The unit is a 24-HOUR CONVERSATION WINDOW, not a single message: a credit is spent
+// only when this AI reply OPENS A NEW WINDOW on the conversation. If the conversation
+// already has an open (non-expired) window, this is a free follow-up reply — no charge,
+// no ledger row — and we return { charged: false, windowOpen: true, ... }.
 //
-// CONCURRENCY: the charge is a single atomic conditional UPDATE at the DB level, NOT a
-// read-then-write. Under Postgres' default Read Committed isolation, two concurrent
-// charges for the same tenant would otherwise both read "credits available" before
-// either commits, and both would charge (overspend: creditsUsedThisPeriod can exceed
-// monthlyMessageLimit, or purchasedCredits go negative). To close that race we do the
-// balance check INSIDE the UPDATE's WHERE clause and let Postgres serialize the row
-// writes: the conditional UPDATE only mutates the row (and returns 1 affected row) if
-// there is still balance to spend on that branch. We try the monthly allotment first
-// (WHERE "creditsUsedThisPeriod" < "monthlyMessageLimit"); if it affects 0 rows we try
-// the purchased balance (WHERE "purchasedCredits" > 0). If both affect 0 rows there was
-// nothing to charge → return null (no ledger row written). The ledger insert is tied to
-// whichever branch actually charged, and both live in one transaction so the balance
-// decrement and its ledger row are atomic.
-export async function chargeAiCredit({ tenantId, messageId = null, tokensIn = null, tokensOut = null }) {
+// Return shape:
+//   { charged: true,  windowOpened: true,  state }  — a new window opened and 1 credit spent
+//   { charged: false, windowOpen: true,    state }  — inside an already-open window, free
+//   { charged: false, windowOpen: false,   state: null } — a window WOULD open but there were
+//                                                            no credits to spend (caller gated
+//                                                            on hasCredits(); treat as out-of-credits)
+//
+// CONCURRENCY (AP-T72 — this is the whole point of the design):
+//   Two near-simultaneous inbound messages for the SAME conversation (WhatsApp webhook
+//   retries / a customer double-tapping send) must NOT both charge. We make the WINDOW
+//   FLIP the atomic gate, exactly like markLowCreditNudge()/mark-paid: a single
+//   conditional UPDATE opens the window ONLY when it is currently null or expired —
+//   `WHERE "windowExpiresAt" IS NULL OR "windowExpiresAt" <= now`. Under Postgres Read
+//   Committed the row write is serialized, so of N concurrent callers EXACTLY ONE sees
+//   1 affected row ("won the window") and proceeds to charge; every other sees 0 and
+//   returns free. The balance decrement itself is ALSO a conditional UPDATE (monthly
+//   allotment first, then purchased balance) so it can never overspend. The window flip,
+//   the balance decrement, and the ledger insert all live in ONE transaction: if there
+//   is genuinely no credit to spend we roll back the window flip too, so a future retry
+//   (or the message after a top-up) can still open the window and charge — we never
+//   "open a window for free" on an out-of-credits tenant.
+//
+// DRIFT SAFETY (AP-T71): windowStartedAt/windowExpiresAt may not be migrated on the live
+// DB yet (migration 4_conversation_credit_window is additive but pending live-apply — see
+// developer-notes). All window access here is raw parameterized SQL naming ONLY those two
+// columns (never an implicit SELECT * that would request the whole Conversation row and
+// P2022 on the unmigrated columns). If the columns are genuinely absent live, the window
+// UPDATE throws 42703/P2022 and we fall through the try/catch to a SAFE degrade: charge
+// once per call (old per-message behavior) rather than break message handling.
+export async function chargeAiCredit({
+  conversationId = null,
+  tenantId,
+  messageId = null,
+  tokensIn = null,
+  tokensOut = null,
+  now = new Date(),
+}) {
   return prisma.$transaction(async (tx) => {
-    // 1) Try to spend the monthly allotment atomically. Column-to-column comparison
-    //    (`creditsUsedThisPeriod < monthlyMessageLimit`) can't be expressed in a Prisma
-    //    `where` filter, so this is raw SQL. Only ever increments by 1 when there is
-    //    monthly room, so under concurrency it can never push used past the limit.
+    // ── 1) Atomically decide whether THIS call opens a new 24h window ──────────────
+    // (see the explicit maxWait/timeout on the $transaction call below for why the
+    //  window-flip UPDATE is safe to run under a small connection pool)
+    // Only proceed to charge when the window is newly opened by this very UPDATE.
+    // If conversationId is missing (shouldn't happen on the live path) we can't do the
+    // per-conversation window; fall back to charging this call (fail-safe, never silent-free).
+    let windowOpened = true; // default for the no-conversation / drift-degrade path
+    const windowExpiresAt = new Date(now.getTime() + CONVERSATION_WINDOW_MS);
+    if (conversationId) {
+      try {
+        const rows = await tx.$executeRaw`
+          UPDATE "Conversation"
+             SET "windowStartedAt" = ${now},
+                 "windowExpiresAt" = ${windowExpiresAt}
+           WHERE "id" = ${conversationId}
+             AND ("windowExpiresAt" IS NULL OR "windowExpiresAt" <= ${now})`;
+        windowOpened = rows === 1;
+      } catch (e) {
+        // Columns not migrated live yet (P2022 / 42703) → degrade to per-call charge so
+        // message handling never breaks. Any other error should still abort the txn.
+        const code = e?.code || e?.meta?.code;
+        if (code !== 'P2022' && code !== '42703') throw e;
+        windowOpened = true;
+      }
+    }
+
+    // Inside an already-open window → free follow-up. No charge, no ledger row.
+    if (!windowOpened) {
+      const t = await tx.tenant.findUnique({
+        where: { id: tenantId },
+        select: { monthlyMessageLimit: true, creditsUsedThisPeriod: true, purchasedCredits: true },
+      });
+      return { charged: false, windowOpen: true, state: t ? creditsState(t) : null };
+    }
+
+    // ── 2) A new window opened → charge exactly one credit ─────────────────────────
+    // Monthly allotment first (column-to-column compare needs raw SQL), then purchased.
+    // Each is a conditional UPDATE so it can never overspend under concurrency.
     let branch = null;
     const monthlyRows = await tx.$executeRaw`
       UPDATE "Tenant"
@@ -63,8 +142,6 @@ export async function chargeAiCredit({ tenantId, messageId = null, tokensIn = nu
     if (monthlyRows === 1) {
       branch = 'monthly';
     } else {
-      // 2) Monthly allotment exhausted (or tenant not found) → try the purchased balance.
-      //    WHERE "purchasedCredits" > 0 guarantees it never goes negative under concurrency.
       const purchasedRows = await tx.$executeRaw`
         UPDATE "Tenant"
            SET "purchasedCredits" = "purchasedCredits" - 1
@@ -73,20 +150,44 @@ export async function chargeAiCredit({ tenantId, messageId = null, tokensIn = nu
       if (purchasedRows === 1) branch = 'purchased';
     }
 
-    // Neither branch charged → no credits available (or tenant missing). Nothing to record.
-    if (!branch) return null;
+    if (!branch) {
+      // No credit to spend, but we just flipped the window open above. Throw to roll the
+      // WHOLE transaction back (window flip included) so we never "open a window for free"
+      // — a retry after a top-up can then legitimately open + charge. The caller gated on
+      // hasCredits(); reaching here means credits ran out between the gate and the charge.
+      throw new OutOfCreditsError();
+    }
 
     // The charge committed on exactly one branch → record the paired ledger debit.
     await tx.creditTransaction.create({
       data: { tenantId, type: 'debit', amount: -1, reason: 'ai_reply', messageId, tokensIn, tokensOut },
     });
 
-    // Return the fresh, post-charge credit state (read back the mutated row).
     const t = await tx.tenant.findUnique({
       where: { id: tenantId },
       select: { monthlyMessageLimit: true, creditsUsedThisPeriod: true, purchasedCredits: true },
     });
-    return creditsState(t);
+    return { charged: true, windowOpened: true, state: creditsState(t) };
+  }, {
+    // POOL/CONTENTION SAFETY: production runs Supabase's pgbouncer transaction pooler
+    // with connection_limit=1 per Prisma instance (the recommended serverless config).
+    // This is an INTERACTIVE $transaction, so it holds that single pooled connection for
+    // its whole (short: 2-4 fast statements) lifetime. Two genuinely simultaneous charges
+    // on the SAME instance — a WhatsApp webhook retry landing next to the original, or a
+    // customer double-tapping send — would otherwise queue for the one connection and hit
+    // Prisma's default 2s maxWait, throwing P2028 ("Unable to start a transaction in the
+    // given time") and DROPPING a reply in prod. We raise maxWait so the second charge
+    // waits for the connection to free (~ms hold time) instead of erroring; `timeout` caps
+    // pathological execution so a wedged statement can't pin the pooled connection forever.
+    // This changes NOTHING about the atomic window-flip semantics — of N concurrent callers
+    // still exactly one wins the window and charges; the others serialize and return free.
+    maxWait: 15000,
+    timeout: 20000,
+  }).catch((e) => {
+    // OutOfCreditsError = a window would have opened but there were no credits. The txn
+    // (including the window flip) rolled back. Signal out-of-credits to the caller.
+    if (e instanceof OutOfCreditsError) return { charged: false, windowOpen: false, state: null };
+    throw e;
   });
 }
 

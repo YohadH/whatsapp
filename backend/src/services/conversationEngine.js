@@ -15,6 +15,24 @@ import { notifyOwnerHandoff } from './handoffNotify.js';
 const MEDIA_ORDER_DELAY_MS = Number(process.env.MEDIA_SEND_DELAY_MS) || 1000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Explicit select for every Conversation read/write on the live inbound-message path.
+// DRIFT SAFETY (AP-T71): windowStartedAt/windowExpiresAt are added in migration
+// 4_conversation_credit_window but may not be applied on the live DB yet (deliberate
+// drift, like waPin). An implicit SELECT * would request those columns and throw P2022
+// on every inbound message — silently dropping the customer's reply (the webhook has
+// already 200'd). This lists exactly the columns this engine consumes downstream
+// (id, currentFlowId, currentQuestionId, status, needsHuman, linkSent) and NOTHING
+// else — the window columns are read/written only via chargeAiCredit()'s raw SQL. If
+// you add a new conversation.<field> read below, add it here too.
+const CONVERSATION_ENGINE_SELECT = {
+  id: true,
+  currentFlowId: true,
+  currentQuestionId: true,
+  status: true,
+  needsHuman: true,
+  linkSent: true,
+};
+
 /**
  * Main entry point: process one inbound customer message end-to-end, on behalf
  * of a specific tenant. `tenant` is the full Tenant row (its WhatsApp creds are
@@ -46,6 +64,7 @@ export async function handleIncomingMessage({ tenant, phone, text, name, rawPayl
   let conversation = await prisma.conversation.findFirst({
     where: { tenantId, customerId: customer.id, status: { in: ['active', 'needs_human'] } },
     orderBy: { createdAt: 'desc' },
+    select: CONVERSATION_ENGINE_SELECT,
   });
 
   // 2a) "One & done": if there's no open conversation but this customer already
@@ -57,6 +76,7 @@ export async function handleIncomingMessage({ tenant, phone, text, name, rawPayl
     const completed = await prisma.conversation.findFirst({
       where: { tenantId, customerId: customer.id, status: 'completed', currentFlowId: { not: null } },
       orderBy: { createdAt: 'desc' },
+      select: CONVERSATION_ENGINE_SELECT,
     });
     if (completed) {
       await prisma.message.create({
@@ -72,6 +92,7 @@ export async function handleIncomingMessage({ tenant, phone, text, name, rawPayl
       await prisma.conversation.update({
         where: { id: completed.id },
         data: { lastMessage: text, lastActivityAt: new Date() },
+        select: { id: true }, // drift-safe: don't RETURNING the unmigrated window cols (AP-T71)
       });
       await trackEvent(EVENTS.MESSAGE_RECEIVED, {
         tenantId,
@@ -88,6 +109,7 @@ export async function handleIncomingMessage({ tenant, phone, text, name, rawPayl
   if (!conversation) {
     conversation = await prisma.conversation.create({
       data: { tenantId, customerId: customer.id, whatsappPhone: phone, status: 'active' },
+      select: CONVERSATION_ENGINE_SELECT, // drift-safe (AP-T71): don't RETURNING window cols
     });
     isNew = true;
     await trackEvent(EVENTS.CONVERSATION_STARTED, {
@@ -184,13 +206,26 @@ export async function handleIncomingMessage({ tenant, phone, text, name, rawPayl
     outOfCredits = !allowAI;
     const { response: llm, ai } = await generateAgentResponse(ctx, { allowAI });
     if (ai.used) {
-      // A real OpenAI reply was produced → charge exactly one credit.
-      const state = await chargeAiCredit({ tenantId, tokensIn: ai.tokensIn, tokensOut: ai.tokensOut });
-      // Clear any prior low-credit nudge once credits are flowing again.
-      if (tenant.lowCreditNotifiedAt) {
+      // A real OpenAI reply was produced. Billing unit = a 24h CONVERSATION window:
+      // this charges 1 credit only when this reply OPENS A NEW window on the
+      // conversation; replies inside an already-open window are free (charged:false).
+      const result = await chargeAiCredit({
+        conversationId: conversation.id,
+        tenantId,
+        tokensIn: ai.tokensIn,
+        tokensOut: ai.tokensOut,
+      });
+      // Clear any prior low-credit nudge once credits are flowing again (a charge landed).
+      if (result.charged && tenant.lowCreditNotifiedAt) {
         await prisma.tenant.update({ where: { id: tenantId }, data: { lowCreditNotifiedAt: null } }).catch(() => {});
       }
-      if (state && state.available <= 0) await markLowCreditNudge(tenantId); // just hit zero
+      // Out of credits at charge time (window would open but no balance), or the charge
+      // drained the last credit → nudge to top up (once per low-balance episode).
+      if (!result.charged && result.windowOpen === false) {
+        await markLowCreditNudge(tenantId); // ran out between the hasCredits() gate and the charge
+      } else if (result.state && result.state.available <= 0) {
+        await markLowCreditNudge(tenantId); // just hit zero
+      }
     } else if (outOfCredits) {
       await markLowCreditNudge(tenantId);
     }
@@ -293,6 +328,7 @@ export async function handleIncomingMessage({ tenant, phone, text, name, rawPayl
       linkSent,
       lastActivityAt: new Date(),
     },
+    select: CONVERSATION_ENGINE_SELECT, // drift-safe (AP-T71): don't RETURNING window cols
   });
 
   // Owner handoff notification (§2.4): the moment a conversation newly needs a

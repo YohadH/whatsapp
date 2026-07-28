@@ -201,6 +201,15 @@ model Conversation {
   updatedAt         DateTime @updatedAt
   lastActivityAt    DateTime @default(now())
 
+  // ── AI-credit 24h window ──
+  // Billing unit for AI credits is a rolling 24-hour CONVERSATION window (1 credit =
+  // one handled conversation within 24h, NOT per AI message). windowStartedAt/
+  // windowExpiresAt mark the currently-open window; a credit is charged only when an
+  // AI reply OPENS a new window (windowExpiresAt null or in the past). See
+  // lib/credits.js chargeAiCredit() and CREDITS_DESIGN.md.
+  windowStartedAt   DateTime?
+  windowExpiresAt   DateTime?
+
   tenant   Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   customer Customer         @relation(fields: [customerId], references: [id], onDelete: Cascade)
   flow     Flow?            @relation(fields: [currentFlowId], references: [id])
