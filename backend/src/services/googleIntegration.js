@@ -15,13 +15,14 @@
 //   3. TENANT connected     — a stored, decryptable OAuth token set.
 //
 // SCHEMA-DRIFT SAFE (AP-T71): the googleIntegrationEnabled / googleTokensEnc /
-// googleConnectedEmail columns are added to schema.prisma but the migration
-// (5_google_integration) is intentionally left UNAPPLIED on the live DB until the
-// owner approves the add-on going live. So EVERY DB access here goes through raw
-// SQL helpers that catch the "column does not exist" (Postgres 42703 / Prisma
-// P2022) case and degrade to "not enabled" — never a 500 across the tenant
-// surface. Once the migration is applied live, the exact same code path works
-// unchanged and starts returning real state.
+// googleConnectedEmail columns and the GoogleOAuthState table now live on the
+// production DB (migrations 5_google_integration + 6_google_oauth_state APPLIED
+// live). The raw-SQL drift guards below are retained defensively: EVERY DB access
+// here still goes through helpers that catch the "column/table does not exist"
+// (Postgres 42703/42P01 / Prisma P2022/P2021) case and degrade to "not enabled"
+// — never a 500 — so a fresh/unmigrated environment (a new preview DB, a restored
+// backup) can never take down the tenant surface. On the live DB these guards are
+// no-ops and the code returns real state.
 //
 // TOKENS AT REST: the OAuth token set (access + refresh) is encrypted with the
 // same AES-256-GCM helper as the WhatsApp token (lib/crypto.js), keyed by
@@ -48,8 +49,9 @@ export class GoogleIntegrationError extends Error {
 }
 
 // True when the Postgres error is "column does not exist" — i.e. the
-// 5_google_integration migration has not been applied to this DB yet. Treated as
-// "feature not live" rather than a hard failure (AP-T71 graceful degrade).
+// 5_google_integration migration is not present on this DB (e.g. a fresh preview
+// env). Treated as "feature not live" rather than a hard failure (AP-T71 graceful
+// degrade). No-op on the live DB where the migration is applied.
 function isColumnMissing(err) {
   const msg = String(err?.message || '');
   return (
@@ -61,9 +63,10 @@ function isColumnMissing(err) {
 }
 
 // True when the Postgres error is "relation/table does not exist" — i.e. the
-// 5_google_integration migration (which now also creates the GoogleOAuthState
-// table) has not been applied to this DB yet. Same graceful-degrade intent as
-// isColumnMissing (AP-T71): treat as "feature not live" rather than a 500.
+// GoogleOAuthState table (migration 6_google_oauth_state) is not present on this
+// DB (e.g. a fresh preview env). Same graceful-degrade intent as isColumnMissing
+// (AP-T71): treat as "feature not live" rather than a 500. No-op on the live DB
+// where the migration is applied.
 function isTableMissing(err) {
   const msg = String(err?.message || '');
   return (
