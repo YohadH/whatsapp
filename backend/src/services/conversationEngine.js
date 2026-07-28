@@ -311,10 +311,9 @@ export async function handleIncomingMessage({ tenant, phone, text, name, rawPayl
   });
   agentResponse.lead_score = leadScore;
 
-  // Capture the pre-update handoff state so we can alert the owner exactly on the
-  // false→true edge below (not on every message while it stays true). §2.4.
-  const wasNeedsHuman = conversation.needsHuman;
-
+  // Persist the per-message state (everything EXCEPT the needsHuman flip, which is
+  // handled atomically below). needsHuman is deliberately left out of this update so
+  // the notify gate can be a race-safe conditional flip (see next block).
   conversation = await prisma.conversation.update({
     where: { id: conversation.id },
     data: {
@@ -322,7 +321,6 @@ export async function handleIncomingMessage({ tenant, phone, text, name, rawPayl
       intent: agentResponse.intent,
       currentFlowId: agentResponse.flow_id,
       currentQuestionId: agentResponse.current_question_id,
-      needsHuman: agentResponse.needs_human,
       lastMessage: text,
       leadScore,
       linkSent,
@@ -333,14 +331,36 @@ export async function handleIncomingMessage({ tenant, phone, text, name, rawPayl
 
   // Owner handoff notification (§2.4): the moment a conversation newly needs a
   // human, WhatsApp the business owner with context. Fire only on the false→true
-  // edge; best-effort (never breaks the reply pipeline). lastMessage was just set
-  // to this inbound `text` above, so pass a conversation view that carries it.
-  if (!wasNeedsHuman && agentResponse.needs_human) {
-    await notifyOwnerHandoff({
-      tenant,
-      conversation: { ...conversation, whatsappPhone: phone, lastMessage: text },
-      customer: { name: customer.name, phone: customer.phone || phone },
+  // edge; best-effort (never breaks the reply pipeline).
+  //
+  // TOCTOU-safe (AP-T72): the notify gate IS the DB write. Two near-simultaneous
+  // triggers (a rapid customer message + a concurrent admin assign-human, or two
+  // webhook deliveries) could both read needsHuman:false before either wrote true,
+  // double-alerting the owner. Instead of read-then-write, the flip is a single
+  // conditional updateMany({ where: { needsHuman: false } }) — exactly ONE caller
+  // gets count===1 (wins the flip) and sends; all others get 0 and stay silent.
+  // Mirrors the credits.js window-open gate and payments.js mark-paid flip.
+  if (agentResponse.needs_human) {
+    const flip = await prisma.conversation.updateMany({
+      where: { id: conversation.id, needsHuman: false },
+      data: { needsHuman: true },
     });
+    conversation.needsHuman = true;
+    if (flip.count === 1) {
+      await notifyOwnerHandoff({
+        tenant,
+        conversation: { ...conversation, whatsappPhone: phone, lastMessage: text },
+        customer: { name: customer.name, phone: customer.phone || phone },
+      });
+    }
+  } else {
+    // Not (or no longer) needing a human — clear the flag without notifying.
+    await prisma.conversation.update({
+      where: { id: conversation.id },
+      data: { needsHuman: false },
+      select: { id: true },
+    });
+    conversation.needsHuman = false;
   }
 
   // 10) Save agent reply + send via WhatsApp. Skip entirely when there's nothing
