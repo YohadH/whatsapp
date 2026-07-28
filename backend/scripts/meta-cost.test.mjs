@@ -222,6 +222,47 @@ async function main() {
     const pastMonth = await request(server, { method: 'GET', path: '/api/admin/margin?month=2000-01', token: superToken });
     const pastRowA = (pastMonth.body?.rows || []).find((r) => r.tenantId === tenantA.id);
     check('E — month filter works (2000-01 shows 0 for our new rows)', pastRowA && pastRowA.metaCostCents === 0, `cents=${pastRowA?.metaCostCents}`);
+
+    // ── G/H: idempotency — Meta redelivers status webhooks AT-LEAST-ONCE. A repeat of
+    // the SAME (waMessageId, category) must NOT create a second cost row, but a
+    // genuinely-DIFFERENT category for the same waMessageId still records a distinct row
+    // (the category is part of the @@unique key). Drives the REAL webhook handler — no
+    // hand-duplicated recorder logic (whatsapp-agent-fix-test-methodology-duplicated-logic).
+    const DUP_MSG = 'wamid.DUP1';
+    // First delivery: user_initiated (→ service).
+    const g1 = await request(server, { method: 'POST', path: '/api/whatsapp/webhook', body: statusWebhook({ phoneNumberId: pnA, messageId: DUP_MSG, recipient: '972500000010', category: 'user_initiated', metaConvId: 'mc_DUP' }), sign: true });
+    check('G — first (new-message) webhook acks 200', g1.status === 200, `status=${g1.status}`);
+    await waitForRows(tenantA.id, 3); // A had 2; this adds a 3rd (new waMessageId).
+    const afterFirst = await prisma.metaCostEntry.count({ where: { tenantId: tenantA.id, waMessageId: DUP_MSG } });
+    check('G — first delivery created exactly 1 row for the new waMessageId', afterFirst === 1, `rows=${afterFirst}`);
+
+    // REDELIVERY: byte-identical (same waMessageId + same category). Must be a no-op.
+    const g2 = await request(server, { method: 'POST', path: '/api/whatsapp/webhook', body: statusWebhook({ phoneNumberId: pnA, messageId: DUP_MSG, recipient: '972500000010', category: 'user_initiated', metaConvId: 'mc_DUP' }), sign: true });
+    check('G — redelivered (duplicate) webhook still acks 200 (no throw)', g2.status === 200, `status=${g2.status}`);
+    // Give the async recorder a moment; then assert the count did NOT increase.
+    await new Promise((r) => setTimeout(r, 600));
+    const afterDup = await prisma.metaCostEntry.count({ where: { tenantId: tenantA.id, waMessageId: DUP_MSG } });
+    check('G — REDELIVERED duplicate did NOT create a 2nd row (still exactly 1)', afterDup === 1, `rows=${afterDup}`);
+
+    // Different category for the SAME waMessageId → a legitimately distinct billable
+    // event → a second row is allowed (category is part of the uniqueness key).
+    const h1 = await request(server, { method: 'POST', path: '/api/whatsapp/webhook', body: statusWebhook({ phoneNumberId: pnA, messageId: DUP_MSG, recipient: '972500000010', category: 'marketing', metaConvId: 'mc_DUP' }), sign: true });
+    check('H — same-msg-different-category webhook acks 200', h1.status === 200, `status=${h1.status}`);
+    // Poll until the 2nd (marketing) row for DUP_MSG lands.
+    async function waitForMsgRows(want, ms = 4000) {
+      const deadline = Date.now() + ms;
+      while (Date.now() < deadline) {
+        const n = await prisma.metaCostEntry.count({ where: { tenantId: tenantA.id, waMessageId: DUP_MSG } });
+        if (n >= want) return n;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      return prisma.metaCostEntry.count({ where: { tenantId: tenantA.id, waMessageId: DUP_MSG } });
+    }
+    const afterDiffCat = await waitForMsgRows(2);
+    check('H — different category for same waMessageId DID create a 2nd row (not over-constrained)', afterDiffCat === 2, `rows=${afterDiffCat}`);
+    const dupCats = await prisma.metaCostEntry.findMany({ where: { tenantId: tenantA.id, waMessageId: DUP_MSG }, select: { category: true } });
+    const catSet = new Set(dupCats.map((r) => r.category));
+    check('H — the 2 rows are service + marketing (distinct categories, no dupes)', catSet.size === 2 && catSet.has('service') && catSet.has('marketing'), `cats=${[...catSet].join(',')}`);
   } finally {
     // Cascade deletes the MetaCostEntry rows with the tenant.
     await prisma.tenant.deleteMany({ where: { id: { in: [tenantA.id, tenantB.id] } } }).catch((e) => console.log('cleanup warn:', e.message));

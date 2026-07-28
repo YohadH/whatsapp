@@ -205,6 +205,17 @@ model MetaCostEntry {
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
+  // Idempotency guard (mirrors Message.@@unique([tenantId, waMessageId])). Meta
+  // delivers status webhooks AT-LEAST-ONCE, so a redelivered payload carries the
+  // SAME waMessageId + SAME category — without this, each redelivery would insert a
+  // duplicate cost row and silently overstate Meta cost in GET /api/admin/margin.
+  // Keyed on category too (not just waMessageId) so a genuinely DIFFERENT billable
+  // category for the same message id can still create a distinct row — we only block
+  // an exact (tenant, message, category) repeat. waMessageId is nullable; Postgres
+  // treats NULLs as distinct, so rows with no message id are never deduped (correct —
+  // there is nothing to dedupe on). recordMetaCostEvents() catches the resulting
+  // P2002 unique-violation as a no-op skip so the webhook path never throws.
+  @@unique([tenantId, waMessageId, category])
   @@index([tenantId, createdAt])
   @@index([tenantId, category])
 }

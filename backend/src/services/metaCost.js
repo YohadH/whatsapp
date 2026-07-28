@@ -63,6 +63,15 @@ function isMissingRelation(err) {
   return /relation .*does not exist|table .*does not exist|column .*does not exist/i.test(String(err?.message || ''));
 }
 
+// A duplicate MetaCostEntry — Meta redelivered the same status webhook (at-least-once
+// semantics). Prisma raises P2002 on the @@unique([tenantId, waMessageId, category])
+// guard; Postgres raises 23505 on the same constraint. We treat this as a benign SKIP:
+// the cost was already recorded on the first delivery, so re-recording would double-count.
+function isUniqueViolation(err) {
+  const code = err?.code || err?.meta?.code;
+  return code === 'P2002' || code === '23505';
+}
+
 /**
  * Record Meta conversation-cost entries for a tenant from parsed status events.
  *
@@ -73,11 +82,14 @@ function isMissingRelation(err) {
  *        optional mapper from Meta's conversation id → our Conversation.id.
  * @returns {Promise<{recorded:number, skipped:number, degraded?:boolean}>}
  *
- * Best-effort: never throws. Deduplication is intentionally left to Meta's own
- * per-conversation billing semantics + reporting-side grouping (a conversation can emit
- * several status events; the margin view sums cents, and Meta only bills once per
- * conversation window — a future dedupe on metaConversationId can layer on top without a
- * schema change). For now we record what Meta reports, flagged, so nothing is invented.
+ * Best-effort: never throws. Idempotent against Meta's at-least-once webhook
+ * redelivery: a duplicate (tenantId, waMessageId, category) is rejected by the DB
+ * @@unique guard and swallowed here as a benign SKIP (isUniqueViolation), so a
+ * redelivered status event NEVER creates a second cost row / overstates Meta cost in
+ * the margin view. A genuinely different billable category for the same waMessageId
+ * still records a distinct row (the category is part of the key). Events with a null
+ * waMessageId are not deduped (Postgres treats NULLs as distinct — there is nothing to
+ * dedupe on). We record what Meta reports, flagged, so nothing is invented.
  */
 export async function recordMetaCostEvents({ tenantId, events, resolveConversationId } = {}) {
   if (!tenantId || !Array.isArray(events) || events.length === 0) return { recorded: 0, skipped: 0 };
@@ -119,6 +131,15 @@ export async function recordMetaCostEvents({ tenantId, events, resolveConversati
       });
       recorded++;
     } catch (err) {
+      if (isUniqueViolation(err)) {
+        // Meta redelivered this exact status event (at-least-once) — the cost row
+        // already exists. Skip silently so we never double-count. This mirrors the
+        // inbound-message idempotency guard in conversationEngine.js (which pre-checks
+        // Message.tenantId_waMessageId); here we let the DB unique constraint be the
+        // arbiter and swallow the collision — no throw, no effect on message/credit flow.
+        skipped++;
+        continue;
+      }
       if (isMissingRelation(err)) {
         // Table not migrated live yet → degrade gracefully, do not break message handling.
         console.warn('[metaCost] MetaCostEntry table not migrated live — skipping cost recording');

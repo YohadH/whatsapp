@@ -1,0 +1,21 @@
+-- Idempotency guard for the Meta conversation-cost ledger (BUG:
+-- whatsapp-agent-metacostentry-has-no-idempotency). Meta delivers WhatsApp status
+-- webhooks AT-LEAST-ONCE, so a redelivered `statuses[]` payload carries the SAME
+-- waMessageId + SAME pricing category. Without a unique constraint each redelivery
+-- inserted a duplicate MetaCostEntry row, silently overstating Meta cost in the
+-- super-admin margin view (GET /api/admin/margin). This mirrors the existing
+-- Message.@@unique([tenantId, waMessageId]) idempotency guard the inbound-message
+-- path already relies on (conversationEngine.js:46-53).
+--
+-- Keyed on `category` as well as `waMessageId` so a genuinely-different billable
+-- category for the same message id can still record a distinct row — we only block an
+-- exact (tenant, message, category) repeat. waMessageId is nullable; Postgres treats
+-- NULLs as distinct in a UNIQUE index, so rows with no message id are never deduped
+-- (correct — there is nothing to dedupe on).
+--
+-- SAFE / ADDITIVE (AP-T58): adds a UNIQUE index to an EMPTY live table (verified 0
+-- rows, 0 violating groups before authoring). No drop, no rename, no backfill, no
+-- change to existing columns. Reversible by dropping the index. IF NOT EXISTS keeps it
+-- idempotent (this DB has had out-of-band DDL applied — see waPin / BUG-WA-002 notes).
+CREATE UNIQUE INDEX IF NOT EXISTS "MetaCostEntry_tenantId_waMessageId_category_key"
+  ON "MetaCostEntry"("tenantId", "waMessageId", "category");
