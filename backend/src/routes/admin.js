@@ -2,6 +2,7 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
 import prisma from '../lib/prisma.js';
+import config from '../config/index.js';
 import { asyncHandler } from '../middleware/error.js';
 import { encryptSecret } from '../lib/crypto.js';
 import { checkToken, finalizeWhatsAppConnection } from '../services/whatsapp.js';
@@ -477,6 +478,144 @@ router.post(
     });
 
     res.status(outcome.code).json(outcome.body);
+  })
+);
+
+// ── Per-tenant margin: revenue proxy vs Meta cost vs OpenAI cost ─────────────
+// GET /api/admin/margin?month=YYYY-MM  (defaults to the current calendar month)
+//
+// The super-admin margin view (system-gap-analysis §2.7 + §4 / CREDITS_DESIGN §6):
+// per tenant, per month, show the three cost/revenue legs so real margin is visible:
+//   • revenueCredits — credits CHARGED this month (debit ledger rows, |amount|). A
+//     revenue PROXY: 1 debited credit ≈ 1 handled conversation the tenant paid for.
+//     (True revenue in currency depends on the tenant's plan/pack price; wired when
+//     pack pricing is finalized — §2.3. Credits charged is the honest available proxy.)
+//   • metaCostCents — sum of MetaCostEntry.costEstimateCents (Meta's own per-conversation
+//     cost, estimated from the config rate card). `metaCostPlaceholder`=true means the
+//     rate card is uncalibrated (owner hasn't entered real Meta numbers) → do NOT read the
+//     Meta cost as real money yet.
+//   • openAiCost — NOT tracked in this codebase as a monetary cost. We DO record
+//     per-message OpenAI TOKENS on the credit ledger (CreditTransaction.tokensIn/Out), so
+//     we surface summed tokens as a proxy, but there is no $/token cost table → openAiCostCents
+//     is null and openAiCostTracked=false. This is a known gap, not a fabricated number.
+router.get(
+  '/margin',
+  asyncHandler(async (req, res) => {
+    // Resolve the month window [start, nextMonthStart).
+    const monthStr = /^\d{4}-\d{2}$/.test(req.query.month || '') ? req.query.month : null;
+    const now = new Date();
+    const start = monthStr
+      ? new Date(`${monthStr}-01T00:00:00.000Z`)
+      : new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const end = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1));
+    const month = `${start.getUTCFullYear()}-${String(start.getUTCMonth() + 1).padStart(2, '0')}`;
+
+    const tenants = await prisma.tenant.findMany({
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, name: true, slug: true, plan: true, currency: true },
+    });
+
+    // Revenue proxy: credits DEBITED (AI replies charged) per tenant this month.
+    const debits = await prisma.creditTransaction.groupBy({
+      by: ['tenantId'],
+      where: { type: 'debit', createdAt: { gte: start, lt: end } },
+      _sum: { amount: true, tokensIn: true, tokensOut: true },
+      _count: { _all: true },
+    });
+    const debitByTenant = Object.fromEntries(
+      debits.map((d) => [
+        d.tenantId,
+        {
+          creditsCharged: Math.abs(d._sum.amount || 0),
+          chargeCount: d._count._all,
+          tokensIn: d._sum.tokensIn || 0,
+          tokensOut: d._sum.tokensOut || 0,
+        },
+      ])
+    );
+
+    // Meta cost: sum of estimated conversation cost per tenant this month. Table may not
+    // be migrated live yet → degrade to zeros (metaCostTracked=false) rather than 500.
+    let metaByTenant = {};
+    let metaCostTracked = true;
+    try {
+      const metaAgg = await prisma.metaCostEntry.groupBy({
+        by: ['tenantId'],
+        where: { createdAt: { gte: start, lt: end } },
+        _sum: { costEstimateCents: true },
+        _count: { _all: true },
+      });
+      // Whether any entry in the window is a placeholder (uncalibrated rate card).
+      const placeholderAgg = await prisma.metaCostEntry.groupBy({
+        by: ['tenantId'],
+        where: { createdAt: { gte: start, lt: end }, placeholder: true },
+        _count: { _all: true },
+      });
+      const placeholderCount = Object.fromEntries(placeholderAgg.map((p) => [p.tenantId, p._count._all]));
+      metaByTenant = Object.fromEntries(
+        metaAgg.map((m) => [
+          m.tenantId,
+          {
+            metaCostCents: m._sum.costEstimateCents || 0,
+            metaEvents: m._count._all,
+            metaCostPlaceholder: (placeholderCount[m.tenantId] || 0) > 0,
+          },
+        ])
+      );
+    } catch (err) {
+      const code = err?.code || err?.meta?.code;
+      if (code === 'P2021' || code === 'P2022' || code === '42P01' || code === '42703') {
+        metaCostTracked = false; // MetaCostEntry not migrated live yet
+      } else {
+        throw err;
+      }
+    }
+
+    const rows = tenants.map((t) => {
+      const rev = debitByTenant[t.id] || { creditsCharged: 0, chargeCount: 0, tokensIn: 0, tokensOut: 0 };
+      const meta = metaByTenant[t.id] || { metaCostCents: 0, metaEvents: 0, metaCostPlaceholder: false };
+      return {
+        tenantId: t.id,
+        name: t.name,
+        slug: t.slug,
+        plan: t.plan,
+        currency: t.currency,
+        // Revenue proxy (credits charged this month).
+        creditsCharged: rev.creditsCharged,
+        chargeCount: rev.chargeCount,
+        // Meta cost (estimated, in cents of config.metaPricing.currency).
+        metaCostCents: meta.metaCostCents,
+        metaEvents: meta.metaEvents,
+        metaCostPlaceholder: meta.metaCostPlaceholder,
+        // OpenAI: tokens only (no monetary cost table in this codebase — known gap).
+        openAiTokensIn: rev.tokensIn,
+        openAiTokensOut: rev.tokensOut,
+        openAiCostCents: null,
+      };
+    });
+
+    const totals = rows.reduce(
+      (acc, r) => {
+        acc.creditsCharged += r.creditsCharged;
+        acc.metaCostCents += r.metaCostCents;
+        acc.openAiTokensIn += r.openAiTokensIn;
+        acc.openAiTokensOut += r.openAiTokensOut;
+        return acc;
+      },
+      { creditsCharged: 0, metaCostCents: 0, openAiTokensIn: 0, openAiTokensOut: 0 }
+    );
+
+    res.json({
+      month,
+      currency: config.metaPricing?.currency || 'USD',
+      metaCostTracked,
+      // True when the rate card is a placeholder (all-0/uncalibrated) → the Meta cost
+      // numbers are structurally 0 and must not be read as real money.
+      metaRateCardPlaceholder: config.metaPricing?.placeholder !== false,
+      openAiCostTracked: false, // no $/token cost table in this codebase (documented gap)
+      rows,
+      totals,
+    });
   })
 );
 

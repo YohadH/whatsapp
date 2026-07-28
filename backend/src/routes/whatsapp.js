@@ -5,9 +5,10 @@ import prisma from '../lib/prisma.js';
 import { asyncHandler } from '../middleware/error.js';
 import { requireAuth } from '../middleware/auth.js';
 import { withTenant, TENANT_SELECT } from '../middleware/tenant.js';
-import { parseIncomingMessage } from '../services/whatsapp.js';
+import { parseIncomingMessage, parseStatusEvents } from '../services/whatsapp.js';
 import { handleIncomingMessage } from '../services/conversationEngine.js';
 import { handleOptOut } from '../services/optOut.js';
+import { recordMetaCostFromStatuses } from '../services/metaCost.js';
 
 const router = Router();
 
@@ -56,7 +57,39 @@ router.post(
     }
 
     const parsed = parseIncomingMessage(req.body);
+    // Meta delivers pricing/cost info on `statuses[]` events (delivery/read receipts),
+    // NOT on `messages[]`. A status-only payload has no `parsed.text`, so it falls
+    // through the inbound-message handling below — record its Meta conversation-cost
+    // (system-gap-analysis §2.7) here, additively, before we return. Best-effort:
+    // recordMetaCost* never throws and never touches the credit-charging logic.
+    const statusParse = parseStatusEvents(req.body);
     res.sendStatus(200); // acknowledge fast; process inline (small scale)
+
+    if (statusParse && statusParse.events?.length && statusParse.phoneNumberId) {
+      try {
+        const costTenant = await prisma.tenant.findUnique({
+          where: { waPhoneNumberId: statusParse.phoneNumberId },
+          select: { id: true },
+        });
+        if (costTenant) {
+          await recordMetaCostFromStatuses({
+            tenantId: costTenant.id,
+            statusParse,
+            // Map Meta's conversation id → our Conversation.id when a Message carries it.
+            resolveConversationId: async (metaConvId) => {
+              // Best-effort: we don't persist Meta's conversation id today, so this is a
+              // no-op mapping for now (recorded with metaConversationId for later
+              // reconciliation with Meta analytics). Kept as a seam for a future join.
+              void metaConvId;
+              return null;
+            },
+          });
+        }
+      } catch (err) {
+        console.error('[webhook] meta-cost recording error:', err.message);
+      }
+    }
+
     if (!parsed || !parsed.text) return;
     if (!parsed.phoneNumberId) {
       console.warn('[webhook] payload missing phone_number_id — cannot route to a tenant');

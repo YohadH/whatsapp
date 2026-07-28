@@ -368,3 +368,57 @@ export function parseIncomingMessage(payload) {
     return null;
   }
 }
+
+/**
+ * Extract per-conversation Meta PRICING info from a WhatsApp webhook payload.
+ *
+ * Meta delivers delivery/read receipts as `value.statuses[]` (NOT `value.messages[]`),
+ * and it is on these status events that the `pricing` object and `conversation` object
+ * ride — this is the ONLY place Meta tells you what a conversation cost category is.
+ * The inbound-message parser above returns null for a status-only payload, so before
+ * this these events were silently dropped (system-gap-analysis §2.7: "pricing data
+ * present in the payload but unused").
+ *
+ * Shape of a status event (Cloud API):
+ *   { id, status, timestamp, recipient_id,
+ *     conversation: { id, origin: { type }, expiration_timestamp },
+ *     pricing: { billable, pricing_model, category } }
+ *
+ * Returns { phoneNumberId, events: [{ waMessageId, status, recipientId, metaConversationId,
+ *   conversationOrigin, category, billable, pricingModel }] } — one entry per status that
+ * carries a pricing object. Empty events array (or null) when there is no pricing data.
+ */
+export function parseStatusEvents(payload) {
+  try {
+    const entry = payload?.entry?.[0];
+    const change = entry?.changes?.[0];
+    const value = change?.value;
+    const statuses = value?.statuses;
+    if (!Array.isArray(statuses) || statuses.length === 0) return null;
+    const phoneNumberId = value?.metadata?.phone_number_id || null;
+
+    const events = [];
+    for (const s of statuses) {
+      const pricing = s?.pricing;
+      // Only status events that carry a pricing object represent a billable Meta
+      // conversation. A bare "delivered"/"read" with no pricing is not a cost event.
+      if (!pricing || (pricing.category == null && pricing.billable == null)) continue;
+      events.push({
+        waMessageId: s.id || null,
+        status: s.status || null,
+        recipientId: s.recipient_id || null,
+        metaConversationId: s.conversation?.id || null,
+        conversationOrigin: s.conversation?.origin?.type || null,
+        // Prefer the pricing category; fall back to the conversation origin type
+        // (older payloads put business_initiated/user_initiated only on origin).
+        category: pricing.category ?? s.conversation?.origin?.type ?? null,
+        billable: pricing.billable ?? true,
+        pricingModel: pricing.pricing_model || null,
+      });
+    }
+    return { phoneNumberId, events };
+  } catch (err) {
+    console.error('[whatsapp] status parse error', err.message);
+    return null;
+  }
+}

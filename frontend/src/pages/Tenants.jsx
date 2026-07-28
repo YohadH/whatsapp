@@ -29,18 +29,21 @@ export default function Tenants() {
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState(null); // tenant id being edited
   const [approving, setApproving] = useState('');
+  const [margin, setMargin] = useState(null); // per-tenant Meta-cost / margin view
 
   async function load() {
-    const [t, p, es, pur] = await Promise.all([
+    const [t, p, es, pur, mg] = await Promise.all([
       api.get('/api/admin/tenants'),
       api.get('/api/admin/plans'),
       api.get('/api/admin/embedded-signup/config').catch(() => ({ data: { configured: false } })),
       api.get('/api/admin/credit-purchases?status=pending').catch(() => ({ data: [] })),
+      api.get('/api/admin/margin').catch(() => ({ data: null })),
     ]);
     setTenants(t.data);
     setPlans(p.data.plans || {});
     setEsConfig(es.data);
     setPending(pur.data);
+    setMargin(mg.data);
   }
   useEffect(() => { load().catch(() => setTenants([])); }, []);
 
@@ -85,6 +88,10 @@ export default function Tenants() {
             ))}
           </div>
         </div>
+      )}
+
+      {margin && margin.rows && (
+        <MarginTable margin={margin} />
       )}
 
       {tenants.length === 0 ? (
@@ -134,6 +141,84 @@ function Field({ label, hint, ...props }) {
       <label className="label">{label}</label>
       <input className="input" {...props} />
       {hint && <p className="text-xs text-gray-400 mt-1">{hint}</p>}
+    </div>
+  );
+}
+
+// Super-admin margin view: revenue proxy (credits charged) vs Meta cost vs OpenAI cost,
+// per tenant, for the current month. Meta cost comes from MetaCostEntry (webhook pricing
+// categories). See routes/admin.js GET /api/admin/margin + system-gap-analysis §2.7/§4.
+function MarginTable({ margin }) {
+  const cur = margin.currency || 'USD';
+  const money = (cents) => `${(cents / 100).toFixed(2)} ${cur}`;
+  const rows = [...margin.rows].sort((a, b) => b.metaCostCents - a.metaCostCents);
+  return (
+    <div className="card mb-4">
+      <div className="flex items-center justify-between mb-2">
+        <div className="font-semibold text-sm">📊 מרווח לפי לקוח — {margin.month}</div>
+        <div className="text-xs text-gray-400">
+          הכנסה = קרדיטים שחויבו · עלות Meta = הערכה לפי קטגוריית תמחור
+        </div>
+      </div>
+
+      {margin.metaRateCardPlaceholder && (
+        <div className="text-xs bg-amber-50 border border-amber-200 rounded px-3 py-1.5 mb-2 text-amber-700">
+          ⚠️ טבלת תעריפי Meta עדיין לא מוגדרת (placeholder) — עלות ה-Meta מוצגת כ-0 ואינה כסף אמיתי.
+          יש למלא את המספרים האמיתיים ב-<code>config.metaPricing</code> (משתני <code>META_RATE_*</code>).
+        </div>
+      )}
+      {!margin.metaCostTracked && (
+        <div className="text-xs bg-red-50 border border-red-200 rounded px-3 py-1.5 mb-2 text-red-600">
+          טבלת <code>MetaCostEntry</code> אינה קיימת ב-DB עדיין (יש להריץ את מיגרציה 7_meta_cost_entry).
+        </div>
+      )}
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-gray-400 text-xs border-b">
+              <th className="text-right font-medium py-1">לקוח</th>
+              <th className="text-right font-medium py-1">קרדיטים שחויבו</th>
+              <th className="text-right font-medium py-1">עלות Meta</th>
+              <th className="text-right font-medium py-1">אירועי Meta</th>
+              <th className="text-right font-medium py-1">טוקנים (OpenAI)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.tenantId} className="border-b last:border-0">
+                <td className="py-1.5">{r.name}</td>
+                <td className="py-1.5">{r.creditsCharged.toLocaleString('he-IL')}</td>
+                <td className="py-1.5">
+                  {money(r.metaCostCents)}
+                  {r.metaCostPlaceholder && <span className="text-amber-500 mr-1" title="תעריף לא מכויל">*</span>}
+                </td>
+                <td className="py-1.5 text-gray-500">{r.metaEvents}</td>
+                <td className="py-1.5 text-gray-500">
+                  {(r.openAiTokensIn + r.openAiTokensOut).toLocaleString('he-IL')}
+                  <span className="text-gray-300 mr-1" title="אין טבלת עלות $/טוקן בקוד — פער ידוע">(אין עלות ₪)</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr className="font-semibold border-t">
+              <td className="py-1.5">סה״כ</td>
+              <td className="py-1.5">{margin.totals.creditsCharged.toLocaleString('he-IL')}</td>
+              <td className="py-1.5">{money(margin.totals.metaCostCents)}</td>
+              <td className="py-1.5" />
+              <td className="py-1.5 text-gray-500">
+                {(margin.totals.openAiTokensIn + margin.totals.openAiTokensOut).toLocaleString('he-IL')}
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      {!margin.openAiCostTracked && (
+        <p className="text-xs text-gray-400 mt-2">
+          עלות OpenAI ב-₪ אינה נמדדת בקוד הזה (רק טוקנים נרשמים בספר הקרדיטים) — פער ידוע, לא מספר מומצא.
+        </p>
+      )}
     </div>
   );
 }

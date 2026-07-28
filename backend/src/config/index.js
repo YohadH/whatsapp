@@ -172,6 +172,47 @@ const config = {
     enabled: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
   },
 
+  // ── Meta (WhatsApp) conversation-cost rate card ────────────────────────────
+  // Per-tenant Meta-cost visibility (system-gap-analysis §2.7 + §4 / WA-DEV-META-COST).
+  // Meta bills WhatsApp Business conversations by PRICING CATEGORY (the `pricing.category`
+  // field on the webhook's `statuses[]` events). We estimate Meta's cost per conversation
+  // from this rate card so the super-admin margin view can compare price charged vs real
+  // Meta cost per tenant per month.
+  //
+  // IMPORTANT — these are PLACEHOLDER values, NOT real Meta prices. `placeholder` is TRUE
+  // and every rate is 0 by default, so the margin view NEVER shows a fabricated/authoritative
+  // Meta cost until the owner drops in the real rate-card numbers from Meta's published
+  // pricing for the relevant market (https://developers.facebook.com/docs/whatsapp/pricing).
+  // Rates are in whole cents of `currency` per conversation (Meta bills per 24h conversation,
+  // per category). Fill META_RATE_* env vars (or edit this block) with the real per-conversation
+  // rates for your billing market, then set META_PRICING_PLACEHOLDER=false.
+  //
+  // NOTE: Meta's Oct-2026 pricing change (§4) may move to per-message template pricing and
+  // retire the "service"/conversation categories — this table is the single place to update
+  // when that lands, so a pricing-model change becomes visible the moment it happens.
+  metaPricing: {
+    // When true, costEstimate is recorded but the margin view flags Meta cost as an
+    // UNCALIBRATED placeholder (do not treat as real money). Owner sets false after
+    // filling real rates.
+    placeholder: process.env.META_PRICING_PLACEHOLDER
+      ? process.env.META_PRICING_PLACEHOLDER !== 'false'
+      : true,
+    // ISO currency of the rates below (Meta bills in USD by default; some markets differ).
+    currency: process.env.META_PRICING_CURRENCY || 'USD',
+    // Per-conversation rate by pricing category, in whole CENTS. 0 = unset placeholder.
+    // Meta's current categories: marketing | utility | authentication | service.
+    // Legacy/webhook-origin values (business_initiated | user_initiated | referral_conversion)
+    // are normalized onto these by services/metaCost.js#normalizeCategory().
+    ratesCents: {
+      marketing: parseInt(process.env.META_RATE_MARKETING_CENTS || '0', 10),
+      utility: parseInt(process.env.META_RATE_UTILITY_CENTS || '0', 10),
+      authentication: parseInt(process.env.META_RATE_AUTH_CENTS || '0', 10),
+      service: parseInt(process.env.META_RATE_SERVICE_CENTS || '0', 10),
+      // Fallback for an unknown/unmapped category (still 0 by default).
+      unknown: parseInt(process.env.META_RATE_UNKNOWN_CENTS || '0', 10),
+    },
+  },
+
   // Per-tenant plan usage window (messagesThisPeriod resets after this many days).
   usage: {
     periodDays: parseInt(process.env.USAGE_PERIOD_DAYS || '30', 10),

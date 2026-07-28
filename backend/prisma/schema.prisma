@@ -107,6 +107,7 @@ model Tenant {
   creditTxns        CreditTransaction[]
   creditPurchases   CreditPurchase[]
   googleOAuthStates GoogleOAuthState[]
+  metaCostEntries   MetaCostEntry[]
 
   @@index([status])
 }
@@ -152,6 +153,60 @@ model CreditTransaction {
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Meta (WhatsApp) conversation-cost ledger — one row per billable Meta
+// conversation event (from the webhook's `statuses[]` pricing object). This is
+// the COST side of the margin equation, parallel to CreditTransaction (revenue).
+// See system-gap-analysis §2.7 + §4 and services/metaCost.js.
+//
+// Meta bills WhatsApp Business conversations by PRICING CATEGORY. Each status
+// event that carries a `pricing` object (billable=true) is one row here. Cost is
+// ESTIMATED from a config rate card (config.metaPricing) — placeholder/0 until the
+// owner fills real Meta rate-card numbers, so costEstimateCents is never fabricated.
+//
+// ADDITIVE / DRIFT-SAFE (AP-T58/AP-T71): a NEW table, no changes to existing
+// models, so adding it to schema ahead of live-apply does NOT break existing
+// implicit-select queries on other models. The recorder (services/metaCost.js)
+// wraps its insert in a try/catch that degrades to a no-op if the table is not yet
+// migrated live, so Meta-cost recording can never break the inbound message flow.
+// ─────────────────────────────────────────────────────────────
+model MetaCostEntry {
+  id       String @id @default(cuid())
+  tenantId String
+
+  // Our Conversation.id when we can map the Meta conversation to one of ours;
+  // otherwise null (status events reference Meta's own conversation id, which we
+  // don't always have a local mapping for). metaConversationId is Meta's id from
+  // the pricing/conversation object — kept for reconciliation with Meta analytics.
+  conversationId    String?
+  metaConversationId String?
+  waMessageId       String? // the Meta message id the status is about (audit trail)
+
+  // Meta's pricing classification. `category` is normalized to the current Meta
+  // set (marketing | utility | authentication | service). `rawCategory` keeps
+  // exactly what the webhook sent (business_initiated | user_initiated |
+  // referral_conversion | marketing | ...) for auditing a pricing-model change.
+  category    String
+  rawCategory String?
+  pricingModel String? // Meta's pricing_model (e.g. CBP / PMP) when present
+  billable    Boolean @default(true)
+
+  // Estimated Meta cost for this conversation, in whole CENTS of `currency`,
+  // derived from config.metaPricing.ratesCents[category]. `placeholder`=true means
+  // the rate card was uncalibrated (0/placeholder) when this was recorded — the
+  // margin view must NOT treat it as a real Meta cost.
+  costEstimateCents Int     @default(0)
+  currency          String  @default("USD")
+  placeholder       Boolean @default(true)
+
+  createdAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, category])
 }
 
 // ─────────────────────────────────────────────────────────────
