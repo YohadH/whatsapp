@@ -48,7 +48,7 @@ router.post(
     //    (but here signature-verified) call for a mismatched id.
     const outcome = await prisma.$transaction(async (tx) => {
       const flip = await tx.creditPurchase.updateMany({
-        where: { id: parsed.purchaseId, status: { not: 'paid' } },
+        where: { id: parsed.purchaseId, provider: 'payplus', status: { not: 'paid' } },
         data: { status: 'paid', paidAt: new Date(), providerRef: parsed.providerRef },
       });
       if (flip.count !== 1) {

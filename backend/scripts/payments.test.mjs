@@ -59,7 +59,7 @@ function sign(rawBody) {
 async function applyPaidWebhook(parsed) {
   return prisma.$transaction(async (tx) => {
     const flip = await tx.creditPurchase.updateMany({
-      where: { id: parsed.purchaseId, status: { not: 'paid' } },
+      where: { id: parsed.purchaseId, provider: 'payplus', status: { not: 'paid' } },
       data: { status: 'paid', paidAt: new Date(), providerRef: parsed.providerRef },
     });
     if (flip.count !== 1) return { credited: false };
@@ -164,6 +164,24 @@ async function main() {
     check('D2 — two concurrent callbacks credit exactly once', credited === 1, `creditedWinners=${credited}`);
     const t3 = await prisma.tenant.findUnique({ where: { id: tenant.id }, select: { purchasedCredits: true } });
     check('D2 — purchasedCredits is 750 (500 + one 250 grant)', t3.purchasedCredits === 750, `purchasedCredits=${t3.purchasedCredits}`);
+
+    // ── F: provider guard — a 'manual' purchase must NEVER be flippable by the
+    //    automatic payplus webhook path, even when the callback is signature-verified
+    //    and carries a matching id. The WHERE clause filters provider:'payplus', so the
+    //    manual purchase's updateMany matches 0 rows → no flip, no credit, no ledger row.
+    //    (This is the security property behind the inline comment in routes/payments.js.)
+    const manualPurchase = await prisma.creditPurchase.create({
+      data: { tenantId: tenant.id, packId: 'pack_1000', credits: 1000, amountIls: 500, status: 'pending', provider: 'manual' },
+      select: { id: true },
+    });
+    const beforeManual = await prisma.tenant.findUnique({ where: { id: tenant.id }, select: { purchasedCredits: true } });
+    const parsedManual = parseWebhook({ transaction: { status_code: '000', uid: 'txn_manual_spoof' }, more_info: manualPurchase.id });
+    const rManual = await applyPaidWebhook(parsedManual);
+    check('F — payplus webhook does NOT credit a manual-provider purchase', rManual.credited === false, `credited=${rManual.credited}`);
+    const afterManual = await prisma.creditPurchase.findUnique({ where: { id: manualPurchase.id }, select: { status: true } });
+    check('F — the manual purchase stays pending (never flipped to paid)', afterManual.status === 'pending', `status=${afterManual.status}`);
+    const tManual = await prisma.tenant.findUnique({ where: { id: tenant.id }, select: { purchasedCredits: true } });
+    check('F — purchasedCredits unchanged by the spoofed manual flip attempt', tManual.purchasedCredits === beforeManual.purchasedCredits, `before=${beforeManual.purchasedCredits} after=${tManual.purchasedCredits}`);
   } finally {
     await prisma.tenant.deleteMany({ where: { id: tenant.id } }).catch((e) => console.log('cleanup warn:', e.message));
     await prisma.$disconnect();
