@@ -133,9 +133,12 @@ So **each AI message costs you well under one agora.** That means big pricing fr
 | ₪0.10 | ~₪0.003 | ~97% |
 | ₪0.30 | ~₪0.003 | ~99% |
 
-**Suggested starting shape** (your call):
-- Packs: **1,000 credits = ₪X**, **5,000 = ₪Y** (volume discount), **20,000 = ₪Z**.
-- Plans include monthly credits as above; overflow = packs.
+**Locked HeyIL numbers (shipped — see `lib/plans.js` / `lib/creditPacks.js`):**
+- **Plan:** HeyIL — **₪490/mo = 500 handled conversations** (`plan: 'heyil'`,
+  `monthlyMessageLimit: 500`, `priceIls: 490`). A NEW plan, separate from `trial`.
+- **Top-up packs** (1 credit = 1 handled conversation, non-resetting):
+  **250 = ₪150**, **500 = ₪250** (popular), **1,000 = ₪450**.
+- Plans include the monthly conversation allotment; overflow = packs.
 - Keep credit price simple and round; the margin is huge either way, so price on
   **value/positioning**, not cost.
 
@@ -166,3 +169,23 @@ you can watch credits burn down in the dashboard immediately. Phase 3 adds real 
 3. **Out-of-credits** — graceful rule-based fallback (recommended) vs. hard stop?
 4. **Payment provider** — Stripe first (recommended) vs. Israeli local from the start?
 5. **Prices** — pack sizes and price per credit (your call; §7 is the framework).
+
+---
+
+## 10. The ₪990 setup fee is intentionally OUT-OF-SCHEMA
+
+The locked billing model includes a **one-time ₪990 setup fee** (DFY onboarding:
+WhatsApp Business API connection, flow/knowledge-base configuration, go-live).
+
+**This fee is deliberately NOT modeled anywhere in the app** — not in `lib/plans.js`,
+not in `lib/creditPacks.js`, not in the `CreditPurchase` / `CreditTransaction` ledger,
+not in the tenant billing schema. It is a **one-off professional-services charge sold
+and invoiced OUTSIDE the application** (manual invoice / חשבונית מס), not a metered or
+in-app product.
+
+This is recorded here explicitly so nobody later "discovers" the setup fee as a
+missing feature and adds a phantom code path for it. The app meters only the
+recurring, usage-based side of the offer (the ₪490/mo plan + top-up conversation
+packs). If the setup fee ever needs to move in-app (e.g. self-serve onboarding with
+card-on-file), that is a NEW, separate decision — treat its current absence as
+intentional, not a gap.
