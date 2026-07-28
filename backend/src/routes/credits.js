@@ -3,7 +3,7 @@ import prisma from '../lib/prisma.js';
 import { asyncHandler } from '../middleware/error.js';
 import { creditsState } from '../lib/credits.js';
 import { CREDIT_PACKS, getPack } from '../lib/creditPacks.js';
-import { createCheckout } from '../services/payments.js';
+import { createCheckout, activeProvider } from '../services/payments.js';
 
 // Tenant-facing AI credit views (scoped to req.tenant by withTenant). Read-only:
 // balance, usage this period, and the ledger history. Top-ups are performed by the
@@ -60,6 +60,10 @@ router.post(
     const pack = getPack(req.body?.packId);
     if (!pack) return res.status(400).json({ error: 'unknown pack' });
 
+    // Record the purchase under the provider that will actually service it (payplus when
+    // configured, else manual). Amount/credits are taken from the SERVER-side pack, never
+    // from the client body, so a forged request can't buy more credits than it pays for.
+    const provider = activeProvider();
     const purchase = await prisma.creditPurchase.create({
       data: {
         tenantId: req.tenantId,
@@ -67,12 +71,21 @@ router.post(
         credits: pack.credits,
         amountIls: pack.amountIls,
         status: 'pending',
-        provider: 'manual',
+        provider,
       },
     });
 
+    // createCheckout may return { mode:'redirect', url, providerRef } (PayPlus) — persist
+    // the providerRef (page_request_uid) so the async callback can be cross-referenced.
     const checkout = await createCheckout({ purchase, tenant: req.tenant });
-    res.status(201).json({ purchaseId: purchase.id, ...checkout });
+    if (checkout?.providerRef) {
+      await prisma.creditPurchase.update({
+        where: { id: purchase.id },
+        data: { providerRef: checkout.providerRef },
+      });
+    }
+    const { providerRef, ...clientCheckout } = checkout || {};
+    res.status(201).json({ purchaseId: purchase.id, ...clientCheckout });
   })
 );
 

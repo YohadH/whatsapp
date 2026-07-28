@@ -112,8 +112,32 @@ const config = {
 
   // Credit-pack payments. 'manual' = super-admin approves top-ups (default until an
   // Israeli card gateway + merchant account are set up). See services/payments.js.
+  //
+  // PayPlus (Israeli card gateway) is the wired real provider. Set PAYMENTS_PROVIDER=payplus
+  // and supply the four PAYPLUS_* vars to go live. `payplus.enabled` is false (falls back to
+  // 'manual') until an api-key/secret-key/page-uid trio is present, so a mis-set provider can
+  // never leave a tenant unable to top up. baseUrl defaults to production; point it at the
+  // PayPlus sandbox host for test-mode verification.
   payments: {
     provider: process.env.PAYMENTS_PROVIDER || 'manual', // manual | payplus | meshulam | cardcom
+    payplus: {
+      // REST base — production; override with the sandbox host to test end-to-end.
+      baseUrl: process.env.PAYPLUS_BASE_URL || 'https://restapi.payplus.co.il/api/v1.0',
+      apiKey: process.env.PAYPLUS_API_KEY || '',
+      secretKey: process.env.PAYPLUS_SECRET_KEY || '',
+      // The Payment Page UID from the PayPlus dashboard (which hosted page to open).
+      paymentPageUid: process.env.PAYPLUS_PAYMENT_PAGE_UID || '',
+      // charge_method: 1 = charge (immediate). 0 = approval only, 2 = recurring, etc.
+      chargeMethod: parseInt(process.env.PAYPLUS_CHARGE_METHOD || '1', 10),
+      // PayPlus signs the callback `hash` header = HMAC-SHA256(rawBody, secretKey). Their
+      // docs use base64; kept configurable ('base64' | 'hex') for the sandbox-confirm step.
+      hashEncoding: process.env.PAYPLUS_HASH_ENCODING || 'base64',
+      enabled: Boolean(
+        process.env.PAYPLUS_API_KEY &&
+          process.env.PAYPLUS_SECRET_KEY &&
+          process.env.PAYPLUS_PAYMENT_PAGE_UID
+      ),
+    },
   },
 
   // Per-tenant plan usage window (messagesThisPeriod resets after this many days).

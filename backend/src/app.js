@@ -27,6 +27,7 @@ import uploadsRoutes, { uploadsDir } from './routes/uploads.js';
 import adminRoutes from './routes/admin.js';
 import settingsRoutes from './routes/settings.js';
 import creditsRoutes from './routes/credits.js';
+import paymentsRoutes from './routes/payments.js';
 
 const app = express();
 
@@ -74,6 +75,7 @@ app.use('/api/auth/login', authLimiter);
 app.use('/api/auth', authRoutes); // /login public, /me self-guards
 app.use('/api/whatsapp/simulate', authLimiter);
 app.use('/api/whatsapp', whatsappRoutes); // webhook (public) + simulator (auth-gated inside)
+app.use('/api/payments', paymentsRoutes); // PayPlus callback (public, signature-verified) + browser return
 app.use('/', redirectRoutes); // /r/:linkId click tracking
 app.use('/', legalRoutes); // /privacy + /terms (required by Meta for app token)
 app.use('/', bioRoutes); // /l/:slug public link page ("link tree")
