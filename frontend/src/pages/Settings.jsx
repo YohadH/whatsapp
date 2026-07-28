@@ -40,7 +40,71 @@ export default function Settings() {
       </div>
 
       <WhatsAppConnect />
+      <GoogleConnect />
       <Simulator />
+    </div>
+  );
+}
+
+// Google (Gmail + Calendar) add-on — paid, OFF by default. This component renders
+// the "Connect Google" button ONLY when the per-tenant flag is enabled (the status
+// endpoint returns enabled:false when the add-on isn't purchased, and this returns
+// null in that case → nothing is exposed). Infrastructure only; the owner turns the
+// flag on per tenant when a customer buys the add-on.
+function GoogleConnect() {
+  const [status, setStatus] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  function load() {
+    api.get('/api/integrations/google/status')
+      .then((r) => setStatus(r.data))
+      .catch(() => setStatus({ enabled: false }));
+  }
+  useEffect(() => { load(); }, []);
+
+  // Flag OFF (or add-on not enabled) → render nothing at all.
+  if (!status || !status.enabled) return null;
+
+  async function connect() {
+    setError(''); setBusy(true);
+    try {
+      // Ask for the consent URL as JSON, then send the browser to Google.
+      const r = await api.get('/api/integrations/google/connect?json=1');
+      if (r.data?.url) window.location.href = r.data.url;
+    } catch (err) {
+      setError(err.response?.data?.error || 'פתיחת החיבור ל-Google נכשלה');
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function disconnect() {
+    setError(''); setBusy(true);
+    try { await api.post('/api/integrations/google/disconnect'); load(); }
+    catch (err) { setError(err.response?.data?.error || 'ניתוק Google נכשל'); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div className="card mt-4">
+      <h3 className="font-semibold mb-3">Google (Gmail + יומן) — תוסף</h3>
+      {status.connected ? (
+        <div className="flex items-center justify-between text-sm">
+          <span>מחובר: <strong>{status.email || 'חשבון Google'}</strong></span>
+          <button className="btn" onClick={disconnect} disabled={busy}>נתק</button>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-gray-500">חברו חשבון Google כדי לאפשר יצירת אירועי יומן ושליחת מיילים.</span>
+          <button className="btn btn-primary" onClick={connect} disabled={busy}>
+            {busy ? 'רגע…' : 'חיבור Google'}
+          </button>
+        </div>
+      )}
+      {status.notMigrated && (
+        <p className="text-xs text-amber-500 mt-2">התוסף עדיין לא הופעל בשרת (נדרשת הפעלת מיגרציה).</p>
+      )}
+      {error && <p className="text-xs text-red-500 mt-2">{error}</p>}
     </div>
   );
 }

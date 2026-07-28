@@ -71,6 +71,23 @@ model Tenant {
   purchasedCredits      Int       @default(0)
   lowCreditNotifiedAt   DateTime? // throttles the "out of credits" nudge
 
+  // ── Google integration (Gmail + Calendar) — paid add-on, OFF by default ──
+  // Per-tenant feature flag. When false (the default), the Connect flow and every
+  // Calendar/Gmail action return "not enabled"; nothing is exposed. Turned on
+  // per-tenant only when a customer buys the add-on (super-admin sets the flag).
+  // googleTokensEnc holds the OAuth token set (access + refresh) encrypted at rest
+  // with the same AES-256-GCM helper as waTokenEnc (lib/crypto.js) — never plaintext,
+  // never sent to the client. googleConnectedEmail is the connected account, shown
+  // read-only in the dashboard. See services/googleIntegration.js.
+  //
+  // MIGRATION NOTE (AP-T58/AP-T71): additive & nullable — safe to add to schema
+  // ahead of the live apply. Until migration 5_google_integration is applied to the
+  // live DB, code MUST NOT implicitly SELECT * on Tenant (would P2022); all reads
+  // here use explicit `select`.
+  googleIntegrationEnabled Boolean @default(false)
+  googleTokensEnc          String? // encrypted OAuth token set (access + refresh)
+  googleConnectedEmail     String? // the connected Google account email
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

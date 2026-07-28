@@ -28,6 +28,7 @@ import adminRoutes from './routes/admin.js';
 import settingsRoutes from './routes/settings.js';
 import creditsRoutes from './routes/credits.js';
 import paymentsRoutes from './routes/payments.js';
+import integrationsRoutes from './routes/integrations.js';
 
 const app = express();
 
@@ -94,6 +95,7 @@ app.use('/api/uploads', requireAuth, withTenant, uploadsRoutes); // audio upload
 app.use('/api/broadcast', requireAuth, withTenant, broadcastRoutes); // bulk send from an uploaded list
 app.use('/api/settings', requireAuth, withTenant, settingsRoutes); // tenant self-serve WhatsApp connect
 app.use('/api/credits', requireAuth, withTenant, creditsRoutes); // AI credit balance + ledger
+app.use('/api/integrations', requireAuth, withTenant, integrationsRoutes); // Google add-on (flag-gated, OFF by default)
 
 // ── Serve the built admin frontend (single-service deploy) ───
 // When frontend/dist exists, serve it and fall back to index.html for client-side

@@ -140,6 +140,38 @@ const config = {
     },
   },
 
+  // ── Google integration (Gmail + Calendar), OFF by default ──────────────────
+  // A paid, per-tenant add-on. This block only holds the OAuth *app* credentials
+  // (one Google Cloud project for the whole platform); whether a given tenant may
+  // use it is a per-tenant DB flag (Tenant.googleIntegrationEnabled), NOT this.
+  //
+  // `enabled` here means "the platform has OAuth client credentials configured",
+  // i.e. the Connect flow is *installable* — it does NOT auto-enable the feature
+  // for any tenant. Until the owner registers a Google Cloud OAuth client and sets
+  // these three vars, the Connect/callback routes return a clear "not configured"
+  // response and nothing is exposed.
+  //   - redirectUri MUST exactly match an Authorized redirect URI in the Google
+  //     Cloud Console OAuth client, e.g. https://<host>/api/integrations/google/callback
+  google: {
+    clientId: process.env.GOOGLE_CLIENT_ID || '',
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
+    // Falls back to publicBaseUrl + the callback path when unset.
+    redirectUri:
+      process.env.GOOGLE_REDIRECT_URI ||
+      `${(process.env.PUBLIC_BASE_URL || 'http://localhost:4000').replace(/\/$/, '')}/api/integrations/google/callback`,
+    // Calendar (read+write events) + Gmail (send + read). Kept minimal; scopes are
+    // requested at consent time and encoded into the stored token.
+    scopes: [
+      'https://www.googleapis.com/auth/calendar.events',
+      'https://www.googleapis.com/auth/calendar.readonly',
+      'https://www.googleapis.com/auth/gmail.send',
+      'https://www.googleapis.com/auth/gmail.readonly',
+      'openid',
+      'email',
+    ],
+    enabled: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
+  },
+
   // Per-tenant plan usage window (messagesThisPeriod resets after this many days).
   usage: {
     periodDays: parseInt(process.env.USAGE_PERIOD_DAYS || '30', 10),

@@ -518,4 +518,34 @@ router.post(
   })
 );
 
+// ── Google integration add-on (paid, OFF by default) ─────────────────────────
+// POST /api/admin/tenants/:id/google-integration  body: { enabled: true|false }
+// The super-admin flips the per-tenant flag when a customer buys/cancels the
+// Gmail+Calendar add-on. Uses raw SQL so it is drift-safe: if migration
+// 5_google_integration is not applied to the live DB yet, this returns 503
+// "not_migrated" (a clear ops signal) instead of a 500 — mirroring the service
+// layer's graceful degradation (AP-T71). Never exposes tokens.
+router.post(
+  '/tenants/:id/google-integration',
+  asyncHandler(async (req, res) => {
+    const existing = await prisma.tenant.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    if (!existing) return res.status(404).json({ error: 'Tenant not found' });
+    const enabled = req.body?.enabled === true || req.body?.enabled === 'true';
+    try {
+      await prisma.$executeRaw`
+        UPDATE "Tenant" SET "googleIntegrationEnabled" = ${enabled} WHERE "id" = ${req.params.id}`;
+    } catch (err) {
+      const msg = String(err?.message || '');
+      if (err?.code === 'P2022' || err?.code === '42703' || /column .*does not exist/i.test(msg)) {
+        return res.status(503).json({
+          error: 'Google integration columns are not migrated on this database yet (apply migration 5_google_integration).',
+          code: 'not_migrated',
+        });
+      }
+      throw err;
+    }
+    res.json({ id: req.params.id, googleIntegrationEnabled: enabled });
+  })
+);
+
 export default router;
