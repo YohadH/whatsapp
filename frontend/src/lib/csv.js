@@ -5,12 +5,27 @@
 // as a Blob download. Kept as a pure module (no DOM in the string-building part)
 // so buildAnalyticsCsv can be smoke-tested in isolation with plain node.
 
-// RFC-4180 field escaping: wrap in double quotes and double any inner quote when
-// the value contains a comma, quote, or a newline. A leading BOM (added in
-// buildAnalyticsCsv) makes Excel read the file as UTF-8 so Hebrew renders.
+// Formula-injection (CSV injection) neutralization. Excel/Sheets/LibreOffice
+// treat a cell whose text starts with = + - @ (or a leading tab / carriage
+// return) as a FORMULA when the file is opened, so a value like
+// `=cmd|'/c calc'!A1` or `=HYPERLINK(...)` sent by a customer over WhatsApp can
+// execute in the admin's spreadsheet once they export & open Analytics. The
+// standard mitigation (OWASP) is to prefix such a value with a single quote so
+// the spreadsheet app renders it as literal text instead of evaluating it.
+// Applied at the serialization layer so it covers EVERY exported field
+// uniformly, not just the one known customer-controlled column.
+function neutralizeFormula(s) {
+  if (s.length > 0 && /^[=+\-@\t\r]/.test(s)) return `'${s}`;
+  return s;
+}
+
+// RFC-4180 field escaping: first neutralize formula-injection, then wrap in
+// double quotes and double any inner quote when the value contains a comma,
+// quote, or a newline. A leading BOM (added in buildAnalyticsCsv) makes Excel
+// read the file as UTF-8 so Hebrew renders.
 export function csvCell(value) {
   if (value === null || value === undefined) return '';
-  const s = String(value);
+  const s = neutralizeFormula(String(value));
   if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
   return s;
 }
