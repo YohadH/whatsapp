@@ -19,7 +19,12 @@ import config from '../config/index.js';
 //            an idempotent field SET (not a counter/balance mutation), so a duplicate
 //            delivery just re-writes the same values — no atomic-conditional gate needed.
 //          - invoice.paid                                     → keeps subscriptionStatus
-//            in sync on each renewal charge.
+//            in sync ('active') on each renewal charge.
+//          - invoice.payment_failed                           → a declined renewal
+//            lapses the tenant to subscriptionStatus:'past_due'.
+//          - customer.subscription.deleted                    → an ended/cancelled
+//            subscription sets subscriptionStatus:'canceled'. Without these two the
+//            status is stuck 'active' forever once a tenant subscribes.
 //   POST /api/payments/payplus/webhook  → PayPlus's server-to-server callback (IPN).
 //        Signature-verified, then flips the matched CreditPurchase pending→paid and
 //        grants the credits — kept wired as a secondary provider option (not deleted).
@@ -118,6 +123,42 @@ router.post(
         await prisma.tenant.updateMany({
           where: { stripeSubscriptionId: subscriptionId },
           data: { subscriptionStatus: 'active' },
+        });
+      }
+      return res.status(200).json({ received: true });
+    }
+
+    // ── Failed renewal charge — the subscription lapses into a non-paying state. ──
+    // Stripe fires invoice.payment_failed when a recurring charge is declined (card
+    // expired, insufficient funds, etc.). Mark the tenant past_due so paid entitlements
+    // stop reflecting a paid subscription (matches the schema's documented convention:
+    // active | past_due | canceled | incomplete). We match by stripeSubscriptionId, the
+    // same way invoice.paid does. Idempotent field SET — a retry just re-writes past_due.
+    if (event.type === 'invoice.payment_failed') {
+      const invoice = event.data.object;
+      const subscriptionId = typeof invoice.subscription === 'string' ? invoice.subscription : invoice.subscription?.id;
+      if (subscriptionId) {
+        await prisma.tenant.updateMany({
+          where: { stripeSubscriptionId: subscriptionId },
+          data: { subscriptionStatus: 'past_due' },
+        });
+      }
+      return res.status(200).json({ received: true });
+    }
+
+    // ── Subscription ended/cancelled — explicit revocation of the paid subscription. ──
+    // Stripe fires customer.subscription.deleted when a subscription is cancelled (by the
+    // customer, by us, or after Stripe exhausts its dunning retries on repeated payment
+    // failures). Without this handler a cancelled tenant would keep subscriptionStatus
+    // stuck at 'active' forever. The event's data.object IS the subscription, so its `id`
+    // is the stripeSubscriptionId we stored. Idempotent field SET.
+    if (event.type === 'customer.subscription.deleted') {
+      const subscription = event.data.object;
+      const subscriptionId = typeof subscription.id === 'string' ? subscription.id : null;
+      if (subscriptionId) {
+        await prisma.tenant.updateMany({
+          where: { stripeSubscriptionId: subscriptionId },
+          data: { subscriptionStatus: 'canceled' },
         });
       }
       return res.status(200).json({ received: true });

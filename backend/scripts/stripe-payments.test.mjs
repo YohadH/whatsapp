@@ -43,6 +43,10 @@
 //   J. REAL webhook route: invoice.paid keeps subscriptionStatus:'active' in sync for
 //      the tenant matched by stripeSubscriptionId.
 //   K. An invalid signature is rejected with 403 by the real route (no state change).
+//   L. REAL webhook route: invoice.payment_failed lapses the matched tenant to
+//      subscriptionStatus:'past_due' (a declined renewal revokes the 'active' state).
+//   M. REAL webhook route: customer.subscription.deleted sets the matched tenant to
+//      subscriptionStatus:'canceled' (an ended/cancelled subscription is revoked).
 //
 // NOT verified here: a real call to Stripe's live/test-mode API (no account keys in
 // this sandbox — the task is explicit that live activation needs the owner's Stripe
@@ -299,6 +303,35 @@ async function main() {
     check('J — REAL route acks 200 on invoice.paid', rInv.status === 200, `status=${rInv.status}`);
     const afterInvoice = await prisma.tenant.findUnique({ where: { id: tenant.id }, select: { subscriptionStatus: true } });
     check('J — subscriptionStatus back to active after renewal', afterInvoice.subscriptionStatus === 'active', `status=${afterInvoice.subscriptionStatus}`);
+
+    // ── L: invoice.payment_failed lapses the tenant to past_due ──────────────────
+    // Precondition: the tenant is 'active' (set by J above). A declined renewal must
+    // revoke that. Matches by stripeSubscriptionId (sub_test_1, set in case I).
+    const evtFailed = {
+      id: 'evt_invoice_failed_1',
+      object: 'event',
+      type: 'invoice.payment_failed',
+      data: { object: { id: 'in_test_failed_1', object: 'invoice', subscription: 'sub_test_1' } },
+    };
+    const rFailed = await postStripeWebhook(server, evtFailed);
+    check('L — REAL route acks 200 on invoice.payment_failed', rFailed.status === 200, `status=${rFailed.status}`);
+    const afterFailed = await prisma.tenant.findUnique({ where: { id: tenant.id }, select: { subscriptionStatus: true } });
+    check('L — subscriptionStatus lapsed to past_due after a failed charge', afterFailed.subscriptionStatus === 'past_due', `status=${afterFailed.subscriptionStatus}`);
+
+    // ── M: customer.subscription.deleted revokes the subscription (canceled) ─────
+    // The event's data.object IS the subscription, so object.id is the stored
+    // stripeSubscriptionId. Even starting from past_due (set by L), a cancellation
+    // sets 'canceled'.
+    const evtDeleted = {
+      id: 'evt_sub_deleted_1',
+      object: 'event',
+      type: 'customer.subscription.deleted',
+      data: { object: { id: 'sub_test_1', object: 'subscription', status: 'canceled' } },
+    };
+    const rDeleted = await postStripeWebhook(server, evtDeleted);
+    check('M — REAL route acks 200 on customer.subscription.deleted', rDeleted.status === 200, `status=${rDeleted.status}`);
+    const afterDeleted = await prisma.tenant.findUnique({ where: { id: tenant.id }, select: { subscriptionStatus: true } });
+    check('M — subscriptionStatus set to canceled after subscription.deleted', afterDeleted.subscriptionStatus === 'canceled', `status=${afterDeleted.subscriptionStatus}`);
   } finally {
     await prisma.tenant.deleteMany({ where: { id: tenant.id } }).catch((e) => console.log('cleanup warn:', e.message));
     await new Promise((r) => server.close(r));
