@@ -403,6 +403,56 @@ async function main() {
         JSON.stringify(after)
       );
     }
+
+    // ── N: payment_failed → subscription.deleted on the SAME subscription reaches 'canceled' ──
+    //    The whatsapp-agent-fix-stripe-subscription-deleted bug: when invoice.payment_failed fires
+    //    FIRST (reverting the tenant to plan:'trial' + subscriptionStatus:'past_due'), the later
+    //    customer.subscription.deleted for the SAME subscription used to no-op — its WHERE
+    //    plan:'heyil' matched 0 rows on the already-reverted tenant — leaving subscriptionStatus
+    //    stuck at 'past_due' forever, never reaching the authoritative 'canceled'. The broadened
+    //    WHERE (plan:'heyil' OR plan:'trial'+LAPSE status) now finishes the cancel. Reverting the
+    //    fix in routes/payments.js makes the second assertion below fail (status stays 'past_due').
+    {
+      const subId = `sub_N_${Date.now()}`;
+      const t = await makePaidTenant(subId);
+      created.push(t.id);
+      // Step 1: a failed renewal reverts the tenant to trial/past_due.
+      await postEvent(server, 'invoice.payment_failed', { subscription: subId });
+      const lapsed = await readTenant(t.id);
+      check('N — precondition: payment_failed reverted the tenant to trial/past_due', isTrialRevert(lapsed, 'past_due'), JSON.stringify(lapsed));
+      // Step 2: Stripe later cancels the SAME subscription (e.g. after exhausting dunning retries).
+      const r = await postEvent(server, 'customer.subscription.deleted', { id: subId });
+      check('N — REAL route acks 200 on the follow-up subscription.deleted', r.status === 200, `status=${r.status}`);
+      const canceled = await readTenant(t.id);
+      // plan+caps stay at the trial values (already reverted); subscriptionStatus MUST reach 'canceled'.
+      check(
+        'N — payment_failed→subscription.deleted reaches status canceled (bug fix; was stuck past_due)',
+        isTrialRevert(canceled, 'canceled'),
+        JSON.stringify(canceled)
+      );
+    }
+
+    // ── N2: admin-downgraded-to-TRIAL override survives subscription.deleted too ──
+    //    Same override the broadened WHERE must NOT clobber: an admin deliberately downgraded a
+    //    still-Stripe-subscribed tenant to 'trial' while subscriptionStatus stayed 'active' (the
+    //    admin plan-change path never writes subscriptionStatus). Because branch (b) of the new
+    //    WHERE requires a LAPSE status ('past_due'/'canceled'), an 'active' admin-trial matches
+    //    neither branch and is left intact. M2 proves the 'pro' override for subscription.deleted;
+    //    M4 proves the active-trial override for invoice.paid — this closes the remaining corner:
+    //    active-trial override × subscription.deleted (the handler the broadened WHERE touches).
+    {
+      const subId = `sub_N2_${Date.now()}`;
+      const t = await makeAdminTrialTenant(subId); // plan:'trial', subscriptionStatus:'active'
+      created.push(t.id);
+      const r = await postEvent(server, 'customer.subscription.deleted', { id: subId });
+      check('N2 — REAL route acks 200 on subscription.deleted for admin-trial tenant', r.status === 200, `status=${r.status}`);
+      const after = await readTenant(t.id);
+      check(
+        'N2 — admin-downgraded active-trial tenant is NOT touched by subscription.deleted (status stays active)',
+        isAdminTrialUntouched(after),
+        JSON.stringify(after)
+      );
+    }
   } finally {
     for (const id of created) {
       await prisma.tenant.deleteMany({ where: { id } }).catch((e) => console.log('cleanup warn:', e.message));

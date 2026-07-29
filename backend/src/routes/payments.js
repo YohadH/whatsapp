@@ -30,7 +30,11 @@ import config from '../config/index.js';
 //          - customer.subscription.deleted                    → an ended/cancelled
 //            subscription sets subscriptionStatus:'canceled' AND reverts plan + caps to
 //            the free/default tier. Without these two the status is stuck 'active' forever
-//            once a tenant subscribes, and the paid plan/caps are never revoked.
+//            once a tenant subscribes, and the paid plan/caps are never revoked. The WHERE
+//            matches plan:'heyil' OR (plan:'trial' AND a LAPSE subscriptionStatus) so a
+//            payment_failed→subscription.deleted sequence (which already reverted the tenant
+//            to trial/past_due) still reaches 'canceled' instead of no-op'ing on a stale
+//            plan:'heyil' guard — while an admin override (pro, or active-trial) is preserved.
 //   POST /api/payments/payplus/webhook  → PayPlus's server-to-server callback (IPN).
 //        Signature-verified, then flips the matched CreditPurchase pending→paid and
 //        grants the credits — kept wired as a secondary provider option (not deleted).
@@ -239,10 +243,32 @@ router.post(
       const subscriptionId = typeof subscription.id === 'string' ? subscription.id : null;
       if (subscriptionId) {
         const ent = planEntitlements('trial');
-        // Revert to trial ONLY if the tenant is still on the Stripe-granted 'heyil' plan (same
-        // admin-override guard as invoice.payment_failed above).
+        // Finish cancelling in the two cases where Stripe legitimately owns the plan/status value:
+        //   (a) plan:'heyil'  — a still-paid tenant that is cancelled directly (no prior lapse), OR
+        //   (b) plan:'trial' AND subscriptionStatus IN ('past_due','canceled') — a lapse WE already
+        //       reverted (invoice.payment_failed fired first, stamping trial/past_due), now being
+        //       finalised by Stripe's later customer.subscription.deleted. Without branch (b) the
+        //       plain plan:'heyil' guard matched 0 rows on this already-reverted tenant and the
+        //       cancel silently no-op'd — leaving subscriptionStatus stuck at 'past_due' forever
+        //       instead of reaching the authoritative 'canceled'
+        //       (whatsapp-agent-fix-stripe-subscription-deleted).
+        // An admin who manually moved a still-subscribed tenant to another plan (e.g. 'pro') falls
+        // out on the plan value; an admin who deliberately downgraded to 'trial' while the
+        // subscription is still live keeps subscriptionStatus 'active' (the admin plan-change path
+        // never writes subscriptionStatus), so it matches NEITHER branch and is NOT clobbered — the
+        // admin override survives, exactly as in the invoice.paid recovery gate above. The OR lives
+        // in the updateMany WHERE so the read+write stays one atomic conditional statement (no
+        // TOCTOU); a duplicate subscription.deleted re-writes the same values (branch (b) still
+        // matches the already-'canceled' row), so it is idempotent. Uses only the live-applied
+        // subscriptionStatus column — no schema change, no live-DB drift (AP-T58/T71).
         await prisma.tenant.updateMany({
-          where: { stripeSubscriptionId: subscriptionId, plan: 'heyil' },
+          where: {
+            stripeSubscriptionId: subscriptionId,
+            OR: [
+              { plan: 'heyil' },
+              { plan: 'trial', subscriptionStatus: { in: STRIPE_LAPSED_STATUSES } },
+            ],
+          },
           data: {
             plan: 'trial',
             dailyBroadcastCap: ent.dailyBroadcastCap,
