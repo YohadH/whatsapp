@@ -141,6 +141,11 @@ export async function handleIncomingMessage({ tenant, phone, text, name, rawPayl
 
   let isNew = false;
   if (!conversation) {
+    // NOTE (orphan-conversation race): this create is deliberately NOT atomically
+    // deduped by waMessageId — under two concurrent same-waMessageId deliveries both
+    // handlers reach here and both create a Conversation. That's harmless for the
+    // reply/charge path (the message-create gate at step 3 still lets exactly one
+    // win), but the loser's empty row is cleaned up in that gate's P2002 catch below.
     conversation = await prisma.conversation.create({
       data: { tenantId, customerId: customer.id, whatsappPhone: phone, status: 'active' },
       select: CONVERSATION_ENGINE_SELECT, // drift-safe (AP-T71): don't RETURNING window cols
@@ -173,6 +178,29 @@ export async function handleIncomingMessage({ tenant, phone, text, name, rawPayl
     });
   } catch (err) {
     if (isDuplicateWaMessage(err)) {
+      // ORPHAN-CONVERSATION RACE (data-hygiene): the conversation.create() at step 2
+      // (above) is NOT itself atomically deduped — under two concurrent deliveries of
+      // the SAME waMessageId for a customer with NO open conversation, BOTH handlers
+      // pass the step-0 fast-path AND both create a fresh Conversation before either
+      // reaches this message-create gate. Only ONE wins the message insert; the other
+      // (this one, if isNew) is left holding a brand-new Conversation with ZERO
+      // messages — an empty status:'active' row that pollutes the dashboard's active
+      // list, plus a stray CONVERSATION_STARTED analytics event. It does NOT cause a
+      // double reply/charge (that's already guarded), so we clean it up here rather
+      // than adding a live-DB unique constraint. Safe because at this point nothing
+      // has been written to `conversation` yet (this failed insert would have been its
+      // first message), so `isNew` ⇒ the row is genuinely empty and ours to delete.
+      // Best-effort: a cleanup failure must never turn a duplicate into a thrown error.
+      if (isNew) {
+        try {
+          await prisma.analyticsEvent.deleteMany({
+            where: { tenantId, conversationId: conversation.id, eventName: EVENTS.CONVERSATION_STARTED },
+          });
+          await prisma.conversation.delete({ where: { id: conversation.id } });
+        } catch (cleanupErr) {
+          console.error('[engine] failed to clean up orphan conversation after dedup race:', cleanupErr.message);
+        }
+      }
       return { conversation: null, agentResponse: null, replySent: false, duplicate: true };
     }
     throw err;
