@@ -19,12 +19,18 @@ import config from '../config/index.js';
 //            an idempotent field SET (not a counter/balance mutation), so a duplicate
 //            delivery just re-writes the same values — no atomic-conditional gate needed.
 //          - invoice.paid                                     → keeps subscriptionStatus
-//            in sync ('active') on each renewal charge.
+//            in sync ('active') on each renewal charge AND re-applies the paid heyil
+//            entitlements (plan + caps), so a card that recovers out of past_due is
+//            restored to full paid limits.
 //          - invoice.payment_failed                           → a declined renewal
-//            lapses the tenant to subscriptionStatus:'past_due'.
+//            lapses the tenant to subscriptionStatus:'past_due' AND reverts plan +
+//            dailyBroadcastCap + monthlyMessageLimit to the free/default (trial) tier,
+//            so a churned tenant stops enjoying paid entitlements (the enforcement paths
+//            read those fields, not subscriptionStatus).
 //          - customer.subscription.deleted                    → an ended/cancelled
-//            subscription sets subscriptionStatus:'canceled'. Without these two the
-//            status is stuck 'active' forever once a tenant subscribes.
+//            subscription sets subscriptionStatus:'canceled' AND reverts plan + caps to
+//            the free/default tier. Without these two the status is stuck 'active' forever
+//            once a tenant subscribes, and the paid plan/caps are never revoked.
 //   POST /api/payments/payplus/webhook  → PayPlus's server-to-server callback (IPN).
 //        Signature-verified, then flips the matched CreditPurchase pending→paid and
 //        grants the credits — kept wired as a secondary provider option (not deleted).
@@ -34,6 +40,18 @@ import config from '../config/index.js';
 //        webhook is the source of truth); a browser redirect is spoofable.
 // ─────────────────────────────────────────────────────────────────────────────
 const router = Router();
+
+// Plans that the Stripe subscription lifecycle is allowed to overwrite for a subscribed
+// tenant. The subscription grant sets plan:'heyil'; a lapse reverts it to 'trial'. So while
+// a subscription is live, Stripe legitimately owns one of these two values. If a super-admin
+// MANUALLY re-plans a still-subscribed tenant to something else (e.g. 'pro'/'starter' via
+// PUT /api/admin/tenants/:id), that is a deliberate override and the webhook handlers below
+// must NOT clobber it back — so every grant/revert is gated on the CURRENT plan still being
+// one of these Stripe-managed values (matched in the updateMany WHERE, which also keeps the
+// write atomic — no separate read-then-write TOCTOU). A tenant an admin moved off these plans
+// falls out of the WHERE (0 rows updated) and keeps the admin's choice until the admin
+// clears the subscription or re-subscribes.
+const STRIPE_MANAGED_PLANS = ['heyil', 'trial'];
 
 // POST /api/payments/stripe/webhook
 router.post(
@@ -115,14 +133,34 @@ router.post(
       return res.status(200).json({ received: true });
     }
 
-    // ── Subscription renewal confirmation ──
+    // ── Subscription renewal confirmation / recovery ──
+    // invoice.paid fires on every successful recurring charge, INCLUDING the one that
+    // recovers a subscription out of past_due (Stripe retried a previously-failed card
+    // and it went through). Because invoice.payment_failed / customer.subscription.deleted
+    // now REVERT the tenant's plan+caps to the free tier (below), a plain "set status
+    // active" here would leave a recovered tenant paying again while stuck on the free
+    // entitlements. So we RE-APPLY the paid HeyIL entitlements on every paid invoice —
+    // an idempotent field SET (already-active tenants just re-write the same values), and
+    // the reverse of the revert path. This keeps the round-trip symmetric:
+    //   active → past_due/canceled (revert to trial) → active (re-grant heyil).
     if (event.type === 'invoice.paid') {
       const invoice = event.data.object;
       const subscriptionId = typeof invoice.subscription === 'string' ? invoice.subscription : invoice.subscription?.id;
       if (subscriptionId) {
+        const ent = planEntitlements('heyil');
+        // Re-grant heyil ONLY if the tenant is still on a Stripe-managed plan (heyil after a
+        // renewal, or trial after a prior lapse we're now recovering from). A tenant an admin
+        // manually moved to another plan (e.g. 'pro') is NOT re-granted — the plan guard in the
+        // WHERE preserves the admin override. subscriptionStatus is still stamped for the audit
+        // trail via the same conditional write (it only matters for a Stripe-managed tenant).
         await prisma.tenant.updateMany({
-          where: { stripeSubscriptionId: subscriptionId },
-          data: { subscriptionStatus: 'active' },
+          where: { stripeSubscriptionId: subscriptionId, plan: { in: STRIPE_MANAGED_PLANS } },
+          data: {
+            plan: 'heyil',
+            dailyBroadcastCap: ent.dailyBroadcastCap,
+            monthlyMessageLimit: ent.monthlyMessageLimit,
+            subscriptionStatus: 'active',
+          },
         });
       }
       return res.status(200).json({ received: true });
@@ -130,17 +168,33 @@ router.post(
 
     // ── Failed renewal charge — the subscription lapses into a non-paying state. ──
     // Stripe fires invoice.payment_failed when a recurring charge is declined (card
-    // expired, insufficient funds, etc.). Mark the tenant past_due so paid entitlements
-    // stop reflecting a paid subscription (matches the schema's documented convention:
-    // active | past_due | canceled | incomplete). We match by stripeSubscriptionId, the
-    // same way invoice.paid does. Idempotent field SET — a retry just re-writes past_due.
+    // expired, insufficient funds, etc.). Mark the tenant past_due AND revoke the paid
+    // entitlements — WITHOUT this revert the tenant kept plan:'heyil' + the paid
+    // dailyBroadcastCap/monthlyMessageLimit forever (the revenue-leak bug this task
+    // fixes: the enforcement paths in broadcastRunner.js / lib/credits.js read those
+    // fields, not subscriptionStatus, so a status-only flip changed nothing they see).
+    // We downgrade to the free/default tier — the exact reverse of the grant path above
+    // (which sets plan:'heyil' + planEntitlements('heyil')): plan:'trial' +
+    // planEntitlements('trial'). Matches by stripeSubscriptionId, same as invoice.paid.
+    // Idempotent field SET — a retry / duplicate delivery just re-writes the same values,
+    // so no atomic-conditional gate is needed. A later invoice.paid (recovered card)
+    // re-applies the heyil entitlements. subscriptionStatus stays the audit trail.
     if (event.type === 'invoice.payment_failed') {
       const invoice = event.data.object;
       const subscriptionId = typeof invoice.subscription === 'string' ? invoice.subscription : invoice.subscription?.id;
       if (subscriptionId) {
+        const ent = planEntitlements('trial');
+        // Revert to trial ONLY if the tenant is still on the Stripe-granted 'heyil' plan. If an
+        // admin already moved them off heyil (manual override), the plan guard in the WHERE
+        // matches 0 rows and we leave the admin's choice intact.
         await prisma.tenant.updateMany({
-          where: { stripeSubscriptionId: subscriptionId },
-          data: { subscriptionStatus: 'past_due' },
+          where: { stripeSubscriptionId: subscriptionId, plan: 'heyil' },
+          data: {
+            plan: 'trial',
+            dailyBroadcastCap: ent.dailyBroadcastCap,
+            monthlyMessageLimit: ent.monthlyMessageLimit,
+            subscriptionStatus: 'past_due',
+          },
         });
       }
       return res.status(200).json({ received: true });
@@ -150,15 +204,27 @@ router.post(
     // Stripe fires customer.subscription.deleted when a subscription is cancelled (by the
     // customer, by us, or after Stripe exhausts its dunning retries on repeated payment
     // failures). Without this handler a cancelled tenant would keep subscriptionStatus
-    // stuck at 'active' forever. The event's data.object IS the subscription, so its `id`
-    // is the stripeSubscriptionId we stored. Idempotent field SET.
+    // stuck at 'active' forever — AND (the revenue-leak bug) keep plan:'heyil' + the paid
+    // caps forever. As with invoice.payment_failed, we downgrade to the free/default tier
+    // (plan:'trial' + planEntitlements('trial')), the reverse of the grant path, so the
+    // enforcement paths (broadcastRunner.js / lib/credits.js) actually stop honouring paid
+    // limits. The event's data.object IS the subscription, so its `id` is the
+    // stripeSubscriptionId we stored. Idempotent field SET — no atomic gate needed.
     if (event.type === 'customer.subscription.deleted') {
       const subscription = event.data.object;
       const subscriptionId = typeof subscription.id === 'string' ? subscription.id : null;
       if (subscriptionId) {
+        const ent = planEntitlements('trial');
+        // Revert to trial ONLY if the tenant is still on the Stripe-granted 'heyil' plan (same
+        // admin-override guard as invoice.payment_failed above).
         await prisma.tenant.updateMany({
-          where: { stripeSubscriptionId: subscriptionId },
-          data: { subscriptionStatus: 'canceled' },
+          where: { stripeSubscriptionId: subscriptionId, plan: 'heyil' },
+          data: {
+            plan: 'trial',
+            dailyBroadcastCap: ent.dailyBroadcastCap,
+            monthlyMessageLimit: ent.monthlyMessageLimit,
+            subscriptionStatus: 'canceled',
+          },
         });
       }
       return res.status(200).json({ received: true });
