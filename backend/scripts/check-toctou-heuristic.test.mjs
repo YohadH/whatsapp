@@ -1,0 +1,148 @@
+#!/usr/bin/env node
+// ─────────────────────────────────────────────────────────────────────────────
+// Regression test for backend/scripts/check-toctou-heuristic.mjs
+//
+// Guards the class-method boundary fix (whatsapp-agent-fix-toctou-heuristic-false):
+// the read→gate→write proximity scan must NOT cross from a read in one class METHOD
+// into a bare write in an UNRELATED SIBLING method (a previously-real false positive),
+// yet must STILL flag a genuine read→gate→bare-write anti-pattern that lives inside a
+// single function OR a single class method (no false negative).
+//
+// Drives the REAL tool via `node check-toctou-heuristic.mjs --file <fixture>` (the same
+// entry point the pre-commit hook uses), asserting on its EXIT CODE (0 = clean,
+// 1 = suspicious shape found). Fixtures are written to the OS temp dir and deleted after
+// each case — nothing is left in the repo tree.
+//
+// Run from backend/:  node scripts/check-toctou-heuristic.test.mjs
+// Exit 0 = all cases pass; exit 1 = a case failed.
+// ─────────────────────────────────────────────────────────────────────────────
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const TOOL = path.resolve(__dirname, 'check-toctou-heuristic.mjs');
+
+// Run the tool against one fixture file; return its exit code (0 clean / 1 warned).
+function runToolExitCode(fixturePath) {
+  try {
+    execFileSync('node', [TOOL, '--file', fixturePath], { encoding: 'utf8', stdio: 'pipe' });
+    return 0; // exit 0 → no suspicious shape
+  } catch (err) {
+    if (typeof err.status === 'number') return err.status; // 1 → warned
+    throw err; // a real crash (e.g. exit 2 usage error) is a test failure
+  }
+}
+
+let failures = 0;
+function check(name, fixtureName, source, expectedExit) {
+  const p = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'toctou-test-')), fixtureName);
+  fs.writeFileSync(p, source, 'utf8');
+  let got;
+  try {
+    got = runToolExitCode(p);
+  } finally {
+    fs.rmSync(path.dirname(p), { recursive: true, force: true });
+  }
+  const ok = got === expectedExit;
+  if (!ok) failures++;
+  console.log(`  ${ok ? '✓' : '✖'} ${name} — expected exit ${expectedExit}, got ${got}`);
+}
+
+console.log('check-toctou-heuristic regression:');
+
+// CASE 1 (the fixed false positive): read+guard in class method A, bare write in an
+// UNRELATED sibling method B. The scan must STOP at A's method-close → NOT flagged.
+check(
+  'sibling class methods are NOT paired (false-positive fix)',
+  'sibling.js',
+  `export class BillingService {
+  async markPaid(id) {
+    const purchase = await prisma.creditPurchase.findFirst({ where: { id } });
+    if (purchase.status === 'paid') {
+      return { alreadyPaid: true };
+    }
+    return { ok: true };
+  }
+
+  async recordUsage(tenantId, amount) {
+    await prisma.usageLog.create({ data: { tenantId, amount } });
+    return { logged: true };
+  }
+}
+`,
+  0
+);
+
+// CASE 2 (no false negative — top-level function): a real same-FUNCTION
+// read→guard→bare-write anti-pattern must STILL be flagged.
+check(
+  'same top-level function anti-pattern IS flagged',
+  'samefunc.js',
+  `export async function markPaid(id) {
+  const purchase = await prisma.creditPurchase.findFirst({ where: { id } });
+  if (purchase.status !== 'paid') {
+    await prisma.creditPurchase.update({ where: { id }, data: { status: 'paid' } });
+  }
+  return { ok: true };
+}
+`,
+  1
+);
+
+// CASE 3 (no false negative — class method, with a benign nested block between read and
+// write): the brace tracker must not stop the scan inside the read's OWN method. The
+// anti-pattern in markPaid IS flagged; the sibling recordUsage is NOT the paired write.
+check(
+  'same class-method anti-pattern IS flagged (nested block does not stop scan)',
+  'classmethod.js',
+  `export class BillingService {
+  helper() {
+    return 1;
+  }
+
+  async markPaid(id) {
+    const purchase = await prisma.creditPurchase.findFirst({ where: { id } });
+    if (purchase.status !== 'paid') {
+      if (purchase.amount > 0) {
+        console.log('charging');
+      }
+      await prisma.creditPurchase.update({ where: { id }, data: { status: 'paid' } });
+    }
+    return { ok: true };
+  }
+
+  async recordUsage(tenantId, amount) {
+    await prisma.usageLog.create({ data: { tenantId, amount } });
+  }
+}
+`,
+  1
+);
+
+// CASE 4 (robustness): unbalanced braces inside STRING literals between read and write
+// must not skew the brace tracker (braceDelta strips string bodies) → still flagged.
+check(
+  'unbalanced braces in strings do not break detection',
+  'tricky.js',
+  `export async function markPaid(id) {
+  const purchase = await prisma.creditPurchase.findFirst({ where: { id } });
+  const a = 'status: }}}';
+  const b = "prefix { only";
+  if (purchase.status !== 'paid') {
+    await prisma.creditPurchase.update({ where: { id }, data: { status: 'paid' } });
+  }
+  return { ok: true };
+}
+`,
+  1
+);
+
+if (failures === 0) {
+  console.log('✓ all cases pass');
+  process.exit(0);
+}
+console.error(`✖ ${failures} case(s) failed`);
+process.exit(1);

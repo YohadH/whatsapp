@@ -163,11 +163,41 @@ const CLASH_VAR_RE = /^(clash|exists|existing|dupe|duplicate|taken|conflict)/i;
 // read→write scan so proximity never crosses a function boundary. Matches this repo's
 // styles: `export ... function`, `function name(`, `router.get/post/...(`,
 // `async function`, and a bare `}` at column 0 (end of a top-level block).
+//
+// NOTE: this catches TOP-LEVEL (column-0) boundaries only. Indented class-method
+// boundaries (`  async markPaid(id) {` and their `  }` close, which have no `function`
+// keyword and are indented) are NOT matched here — those are handled structurally by
+// the brace-depth tracker in findSuspiciousPairs (the `depth < 0` scan-stop). Using
+// depth rather than another anchored regex is what keeps a read in one class method from
+// pairing with a bare write in an unrelated SIBLING method, without a regex broad enough
+// to also stop at a benign mid-body `}` (a nested `if`/object close).
 const FUNC_BOUNDARY_RE =
   /^(export\s+)?(async\s+)?function\b|^router\.(get|post|put|patch|delete)\s*\(|^\}\s*\)?[;,]?\s*$/;
 
 // A line that is ONLY a comment (// or * ... ) — never treat as code.
 const COMMENT_ONLY_RE = /^\s*(\/\/|\*|\/\*)/;
+
+// Net brace delta of a single line, counting only braces that are actual CODE — string
+// literals and line comments are stripped first so a `{` inside `'{'`, a template
+// literal, or a `// note { }` comment does not skew the count. This is a heuristic, not
+// a parser: it does not track multi-line template-literal or block-comment state, which
+// is acceptable because it is used only to decide when the proximity scan has left the
+// read's OWN enclosing block (a coarse boundary), never to prove exact nesting.
+function braceDelta(line) {
+  const code = line
+    // strip line comments
+    .replace(/\/\/.*$/, '')
+    // strip simple single/double/backtick string bodies (non-greedy, same-line only)
+    .replace(/'(?:[^'\\]|\\.)*'/g, "''")
+    .replace(/"(?:[^"\\]|\\.)*"/g, '""')
+    .replace(/`(?:[^`\\]|\\.)*`/g, '``');
+  let d = 0;
+  for (const ch of code) {
+    if (ch === '{') d++;
+    else if (ch === '}') d--;
+  }
+  return d;
+}
 
 // How far below a read we still consider a write "gated by" that read, if no function
 // boundary intervenes first. The real bugs span ~10–40 lines (read → guard → update).
@@ -227,11 +257,26 @@ function findSuspiciousPairs(lines) {
 
     const end = Math.min(lines.length, r + 1 + PROXIMITY_LINES);
     let sawGuard = false;
+    // Brace-depth tracker scoped from the read line. Seed with the read line's own net
+    // braces so a multi-line read (`... findFirst({` … `});`) starts at its true nesting
+    // baseline; then accumulate per scanned line. The moment cumulative depth drops BELOW
+    // zero we have exited the read's OWN enclosing block (its function OR class method),
+    // so any write beyond that point lives in an unrelated later scope — stop the scan.
+    // A benign mid-body `}` (nested `if`/object close) only returns depth toward zero,
+    // never below, so this does NOT stop the scan inside the read's own method (which
+    // would create a false NEGATIVE). This is the structural complement to FUNC_BOUNDARY_RE
+    // that closes the indented-class-method sibling gap.
+    let depth = braceDelta(lines[r]);
     for (let w = r + 1; w < end; w++) {
       const line = lines[w];
-      // STOP at a function/handler boundary so a read is never paired with a write in
-      // an unrelated later function (the #1 false-positive source).
+      // STOP at a top-level function/handler boundary so a read is never paired with a
+      // write in an unrelated later function (the #1 false-positive source).
       if (FUNC_BOUNDARY_RE.test(line)) break;
+      // STOP when we have structurally left the read's enclosing block/method. Evaluate
+      // AFTER the boundary regex but BEFORE matching this line as code: a line that closes
+      // the enclosing method (its `}`) must not itself be a candidate write/guard.
+      depth += braceDelta(line);
+      if (depth < 0) break;
       if (COMMENT_ONLY_RE.test(line)) continue; // never match code inside a comment
       // A qualifying guard = a conditional (if/ternary/early-return/comparison) that
       // reads a FIELD of the bound var (varName.field). A pure existence/truthiness
