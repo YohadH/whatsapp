@@ -28,6 +28,32 @@ function stageOf(c) {
   return 'new';
 }
 
+// Fetch EVERY conversation for the tenant by paging through the API's { total, page,
+// pageSize, items } envelope. The server caps pageSize at 100, so a tenant with more than
+// 100 conversations spans several pages; we accumulate until we've collected `total` rows
+// (or a page comes back short / empty, which also means we're done). A hard page ceiling
+// guards against an unexpected server response causing an unbounded loop.
+const PAGE_SIZE = 100;
+const MAX_PAGES = 500; // 50k conversations — far beyond any realistic tenant; a safety stop.
+
+async function fetchAllConversations() {
+  const all = [];
+  let page = 1;
+  let total = Infinity;
+  while (all.length < total && page <= MAX_PAGES) {
+    const res = await api.get('/api/conversations', { params: { page, pageSize: PAGE_SIZE } });
+    const data = res.data || {};
+    const batch = data.items || [];
+    all.push(...batch);
+    // Trust the server's reported total when present; otherwise fall back to "stop when a
+    // page returns fewer than a full page of results".
+    total = Number.isFinite(data.total) ? data.total : (batch.length < PAGE_SIZE ? all.length : Infinity);
+    if (batch.length === 0) break; // defensive: never loop on an empty page.
+    page += 1;
+  }
+  return all;
+}
+
 function scoreTone(score) {
   const s = score || 0;
   if (s >= 70) return 'bg-emerald-100 text-emerald-700';
@@ -66,11 +92,15 @@ export default function Leads() {
   function load() {
     setLoading(true);
     setError('');
-    // Pull a generous page of conversations; the pipeline groups them client-side by
-    // derived stage (see stageOf). pageSize is capped at 100 by the API.
-    api
-      .get('/api/conversations?pageSize=100')
-      .then((res) => setItems(res.data.items || []))
+    // The pipeline groups ALL of a tenant's conversations client-side by derived stage
+    // (see stageOf), so we must fetch every conversation — not just the first page. The
+    // API caps pageSize at 100 (backend/src/routes/conversations.js) and returns a
+    // { total, page, pageSize, items } envelope, so we page through until we've collected
+    // `total` rows. Without this, tenants with >100 conversations silently lose leads from
+    // the board — and because results are ordered by lastActivityAt desc, the dropped ones
+    // are exactly the STALE / COOLING leads the pipeline exists to surface for follow-up.
+    fetchAllConversations()
+      .then((all) => setItems(all))
       .catch((err) => setError(errMsg(err)))
       .finally(() => setLoading(false));
   }
