@@ -44,10 +44,18 @@ function gitDir() {
 // It calls the parity check in default (staged) mode; a non-zero exit aborts the
 // commit. Node must be on PATH (it is, in every dev/CI environment that commits).
 const HOOK = `#!/bin/sh
-# Auto-installed by scripts/install-git-hooks.mjs — schema⇄migration parity gate.
-# Blocks a commit that changes backend/prisma/schema.prisma without a migration.
-# To bypass in an emergency: git commit --no-verify
+# Auto-installed by scripts/install-git-hooks.mjs.
+# 1) schema⇄migration parity gate — HARD BLOCK: a commit that changes
+#    backend/prisma/schema.prisma without a migration is refused.
+# 2) TOCTOU heuristic — WARN ONLY (advisory, does NOT block): prints file:line for
+#    any findUnique/findFirst read → field-gate → bare update/create that lacks an
+#    atomic-conditional guard or P2002 catch (AP-T72 read-then-write race shape).
+# To bypass the hard block in an emergency: git commit --no-verify
 node backend/scripts/check-schema-migration-parity.mjs || exit 1
+# Advisory only — deliberately NOT gated with '|| exit 1' so the commit proceeds; a
+# human (developer/bug-reviewer) confirms each warning is an atomic-conditional or a
+# P2002-catch pattern. Any error inside the check is swallowed so it never blocks.
+node backend/scripts/check-toctou-heuristic.mjs || true
 `;
 
 function main() {
