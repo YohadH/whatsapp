@@ -83,12 +83,30 @@ async function inboundNoOpenConversation({ customerId, phone, waMessageId, clean
   } catch (err) {
     if (isDuplicateWaMessage(err)) {
       if (cleanupOrphan && isNew) {
-        // NEW behaviour: clean up the orphan conversation + stray event this handler made.
+        // NEW behaviour: CONDITIONALLY clean up the orphan conversation + stray event
+        // this handler made — only if the row STILL has zero messages. Mirrors the
+        // production fix (src/services/conversationEngine.js): a concurrent distinct-
+        // waMessageId delivery may have attached a real message to this row in the race
+        // window; a conditional deleteMany({ where:{ messages:{none:{}} } }) matches 0
+        // rows in that case, so we never cascade-destroy that message. In this shared-
+        // waMessageId test the loser's row is genuinely empty, so the delete matches 1.
+        // (See toctou-orphan-conversation-distinct-wamid-test.mjs for the distinct case.)
         try {
+          // Reap the stray event FIRST (guarded on still-empty), THEN conditionally
+          // delete the conversation — AnalyticsEvent→Conversation is SetNull, so the
+          // event must be matched before the conversation delete nulls its FK. Mirrors
+          // the production fix ordering exactly.
           await prisma.analyticsEvent.deleteMany({
-            where: { tenantId, conversationId: conversation.id, eventName: CONVERSATION_STARTED },
+            where: {
+              tenantId,
+              conversationId: conversation.id,
+              eventName: CONVERSATION_STARTED,
+              conversation: { messages: { none: {} } },
+            },
           });
-          await prisma.conversation.delete({ where: { id: conversation.id } });
+          await prisma.conversation.deleteMany({
+            where: { id: conversation.id, messages: { none: {} } },
+          });
         } catch (cleanupErr) {
           return { winner: false, duplicate: true, cleanupError: cleanupErr.message };
         }

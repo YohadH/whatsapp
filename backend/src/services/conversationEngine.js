@@ -189,14 +189,46 @@ export async function handleIncomingMessage({ tenant, phone, text, name, rawPayl
       // double reply/charge (that's already guarded), so we clean it up here rather
       // than adding a live-DB unique constraint. Safe because at this point nothing
       // has been written to `conversation` yet (this failed insert would have been its
-      // first message), so `isNew` ⇒ the row is genuinely empty and ours to delete.
+      // first message).
+      //
+      // ⚠ DATA-LOSS RACE (AP-T72): `isNew` does NOT prove the row is still empty by the
+      // time this cleanup runs. A CONCURRENT, DISTINCT-waMessageId inbound message for
+      // the SAME customer can independently run its own step-2 findFirst, find THIS
+      // freshly-created conversation "active", and attach a REAL message to it before
+      // this handler's cleanup fires. An unconditional conversation.delete() would then
+      // CASCADE-DELETE (Message.conversationId is required + onDelete:Cascade) that
+      // other customer's genuine message — silent, no crash, "the message just vanished".
+      // So the delete is a CONDITIONAL delete: it only removes the row if it STILL has
+      // zero messages (messages:{none:{}}), checked atomically at delete time. If a
+      // message attached in the race window, the delete matches 0 rows → we leave the
+      // (now non-empty, legitimately in-use) conversation alone and NEVER destroy the
+      // attached message. Mirrors the atomic-conditional updateMany/deleteMany pattern
+      // used by the needsHuman flip below and credits.js/admin.js. Worst case on a lost
+      // race is a harmless empty active row left behind — never a lost message.
       // Best-effort: a cleanup failure must never turn a duplicate into a thrown error.
       if (isNew) {
         try {
+          // Reap the stray CONVERSATION_STARTED event FIRST, guarded on the conversation
+          // still being message-less (`conversation: { messages: { none: {} } }`). This
+          // must precede the conversation delete: AnalyticsEvent→Conversation is
+          // onDelete:SetNull, so once the conversation row is gone the event's
+          // conversationId is NULLed and can no longer be matched to reap. The relation
+          // guard means we only strip the event off a row we're genuinely about to
+          // delete (still empty) — never off a row a concurrent message put back in use.
           await prisma.analyticsEvent.deleteMany({
-            where: { tenantId, conversationId: conversation.id, eventName: EVENTS.CONVERSATION_STARTED },
+            where: {
+              tenantId,
+              conversationId: conversation.id,
+              eventName: EVENTS.CONVERSATION_STARTED,
+              conversation: { messages: { none: {} } },
+            },
           });
-          await prisma.conversation.delete({ where: { id: conversation.id } });
+          // Then the CONDITIONAL conversation delete: matches only while still empty.
+          // count===0 ⇒ a concurrent distinct-waMessageId message attached in the race
+          // window; leaving the (now in-use) conversation + its message intact is correct.
+          await prisma.conversation.deleteMany({
+            where: { id: conversation.id, messages: { none: {} } },
+          });
         } catch (cleanupErr) {
           console.error('[engine] failed to clean up orphan conversation after dedup race:', cleanupErr.message);
         }
