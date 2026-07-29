@@ -177,26 +177,173 @@ const FUNC_BOUNDARY_RE =
 // A line that is ONLY a comment (// or * ... ) — never treat as code.
 const COMMENT_ONLY_RE = /^\s*(\/\/|\*|\/\*)/;
 
-// Net brace delta of a single line, counting only braces that are actual CODE — string
-// literals and line comments are stripped first so a `{` inside `'{'`, a template
-// literal, or a `// note { }` comment does not skew the count. This is a heuristic, not
-// a parser: it does not track multi-line template-literal or block-comment state, which
-// is acceptable because it is used only to decide when the proximity scan has left the
-// read's OWN enclosing block (a coarse boundary), never to prove exact nesting.
-function braceDelta(line) {
-  const code = line
-    // strip line comments
-    .replace(/\/\/.*$/, '')
-    // strip simple single/double/backtick string bodies (non-greedy, same-line only)
-    .replace(/'(?:[^'\\]|\\.)*'/g, "''")
-    .replace(/"(?:[^"\\]|\\.)*"/g, '""')
-    .replace(/`(?:[^`\\]|\\.)*`/g, '``');
-  let d = 0;
-  for (const ch of code) {
-    if (ch === '{') d++;
-    else if (ch === '}') d--;
-  }
-  return d;
+// Net brace delta, counting only braces that are actual CODE — braces inside string
+// literals, template literals, comments, and regex literals must NOT skew the count so
+// that an unbalanced `{`/`}` inside such a construct cannot desync the running depth (a
+// spurious `depth < 0` prematurely stops the proximity scan → a SILENT FALSE NEGATIVE:
+// a real read→gate→write AP-T72 shape below the tricky construct goes unflagged).
+//
+// The naive per-line stripper (regex replace over ONE line) cannot handle constructs that
+// span multiple lines: a multi-line template literal or a multi-line block comment carries
+// state across line boundaries, and a regex literal (`/foo}bar/`) is not a string at all.
+// So this is a small STATEFUL character scanner: `makeBraceScanner()` returns a per-line
+// delta function that carries `inBlockComment` and `inTemplate` (backtick) state ACROSS
+// calls, and resolves single/double strings, line comments, and (best-effort) regex
+// literals WITHIN each line. It is still a heuristic, not a parser — it only needs to be
+// correct enough to decide when the scan has left the read's OWN enclosing block.
+//
+// Template-literal `${ ... }` interpolation: the OUTER braces of an interpolation are real
+// code delimiters, so we track a small stack of interpolation depths. A `${` inside a
+// template opens a code context (its `}` closes it); braces in the literal TEXT around it
+// are ignored. This keeps ordinary `` `hi ${x}` `` from being mis-counted while still not
+// counting a stray brace in the literal text.
+function makeBraceScanner() {
+  const state = {
+    inBlockComment: false,
+    inTemplate: false,
+    // Stack of `${` interpolation brace-depths (one entry per active `${`); when the
+    // matching `}` for a `${` is reached the entry is popped and we resume template text.
+    interpStack: [],
+  };
+
+  // A `/` starts a regex (rather than a division operator) only in "operator position":
+  // when the previous significant code char is one that cannot end a value. This is the
+  // standard best-effort JS-lexer heuristic — it will not treat `a / b` as a regex, and
+  // treats `= /re/`, `(/re/`, `,/re/`, `return /re/` (prev char `n`→ handled below) as regex.
+  const REGEX_ALLOWED_PREV = new Set([
+    '', '(', '[', '{', ',', ';', ':', '=', '!', '&', '|', '?', '+', '-', '*', '%', '~',
+    '^', '<', '>',
+  ]);
+
+  const scan = function scan(line) {
+    let d = 0;
+    let prevSignificant = ''; // last non-space CODE char seen (for regex disambiguation)
+    let i = 0;
+    const n = line.length;
+
+    while (i < n) {
+      const ch = line[i];
+
+      // ── inside a multi-line block comment: consume until closing */ ─────────────
+      if (state.inBlockComment) {
+        if (ch === '*' && line[i + 1] === '/') {
+          state.inBlockComment = false;
+          i += 2;
+          continue;
+        }
+        i++;
+        continue;
+      }
+
+      // ── inside a template literal (not currently in a `${...}` code context) ─────
+      if (state.inTemplate && state.interpStack.length === 0) {
+        if (ch === '\\') { i += 2; continue; } // escaped char in template text
+        if (ch === '`') { state.inTemplate = false; i++; continue; }
+        if (ch === '$' && line[i + 1] === '{') {
+          state.interpStack.push(0); // entering interpolation code; this `${` brace is code-structural but balanced by its own `}`
+          i += 2;
+          continue;
+        }
+        i++; // ordinary template text (braces here are literal text → ignored)
+        continue;
+      }
+
+      // ── normal code (or inside a `${ ... }` interpolation code context) ─────────
+      // Line comment: rest of the line is a comment.
+      if (ch === '/' && line[i + 1] === '/') break;
+
+      // Block comment start.
+      if (ch === '/' && line[i + 1] === '*') {
+        state.inBlockComment = true;
+        i += 2;
+        continue;
+      }
+
+      // Single / double quoted string — consume to its closing quote (same line; JS
+      // string literals do not span raw newlines, so any unterminated one ends at EOL).
+      if (ch === "'" || ch === '"') {
+        const quote = ch;
+        i++;
+        while (i < n) {
+          if (line[i] === '\\') { i += 2; continue; }
+          if (line[i] === quote) { i++; break; }
+          i++;
+        }
+        prevSignificant = quote; // a string is a value → next `/` is division, not regex
+        continue;
+      }
+
+      // Backtick — enter template-literal state (may span multiple lines).
+      if (ch === '`') {
+        state.inTemplate = true;
+        prevSignificant = '`';
+        i++;
+        continue;
+      }
+
+      // Regex literal — best-effort. Only when `/` is in operator position.
+      if (ch === '/' && REGEX_ALLOWED_PREV.has(prevSignificant)) {
+        let j = i + 1;
+        let inClass = false; // inside a [ ... ] char class, where / is literal
+        let closed = false;
+        while (j < n) {
+          const c = line[j];
+          if (c === '\\') { j += 2; continue; }
+          if (c === '[') inClass = true;
+          else if (c === ']') inClass = false;
+          else if (c === '/' && !inClass) { closed = true; j++; break; }
+          j++;
+        }
+        if (closed) {
+          // Skip regex flags (a-z) after the closing slash.
+          while (j < n && /[a-z]/i.test(line[j])) j++;
+          i = j;
+          prevSignificant = '/'; // a regex is a value
+          continue;
+        }
+        // Not a real regex (no closing slash on this line) → treat `/` as ordinary char.
+      }
+
+      // Real code character.
+      if (ch === '{') {
+        d++;
+        if (state.interpStack.length > 0) {
+          state.interpStack[state.interpStack.length - 1]++;
+        }
+      } else if (ch === '}') {
+        if (state.interpStack.length > 0) {
+          const top = state.interpStack[state.interpStack.length - 1];
+          if (top === 0) {
+            // This `}` closes the `${` interpolation → back to template text. It is NOT
+            // a code brace (its opening `${` was not counted either), so no delta change.
+            state.interpStack.pop();
+            prevSignificant = '}';
+            i++;
+            continue;
+          }
+          state.interpStack[state.interpStack.length - 1]--;
+        }
+        d--;
+      }
+
+      if (ch !== ' ' && ch !== '\t') prevSignificant = ch;
+      i++;
+    }
+    return d;
+  };
+  // Expose the mutable state so callers can tell when a line is (still) being consumed by
+  // a multi-line template literal or block comment (i.e. it is TEXT, not code).
+  scan.state = state;
+  return scan;
+}
+
+// True when the scanner is currently inside a multi-line template literal (in its literal
+// TEXT, not a `${...}` code interpolation) or a block comment — i.e. the current line's
+// remaining content is string/comment TEXT, not code, and must not be matched as a guard
+// or write, nor treated as a function boundary.
+function braceScanInTrickyState(scan) {
+  const s = scan.state;
+  return s.inBlockComment || (s.inTemplate && s.interpStack.length === 0);
 }
 
 // How far below a read we still consider a write "gated by" that read, if no function
@@ -266,17 +413,31 @@ function findSuspiciousPairs(lines) {
     // never below, so this does NOT stop the scan inside the read's own method (which
     // would create a false NEGATIVE). This is the structural complement to FUNC_BOUNDARY_RE
     // that closes the indented-class-method sibling gap.
-    let depth = braceDelta(lines[r]);
+    //
+    // The scanner is STATEFUL (carries multi-line template-literal / block-comment state),
+    // so we build ONE per read and feed it every scanned line IN ORDER starting from the
+    // read line — this is what lets an unbalanced brace inside a multi-line template
+    // literal, a multi-line block comment, or a regex literal NOT desync `depth` and
+    // spuriously stop the scan (the false-negative class this guard fixes).
+    const braceScan = makeBraceScanner();
+    let depth = braceScan(lines[r]);
     for (let w = r + 1; w < end; w++) {
       const line = lines[w];
       // STOP at a top-level function/handler boundary so a read is never paired with a
-      // write in an unrelated later function (the #1 false-positive source).
-      if (FUNC_BOUNDARY_RE.test(line)) break;
+      // write in an unrelated later function (the #1 false-positive source). Only honor
+      // this boundary in NORMAL code state — a `}` or `function`-looking token inside a
+      // multi-line template literal / block comment is TEXT, not a real boundary.
+      const inTricky = braceScanInTrickyState(braceScan);
+      if (!inTricky && FUNC_BOUNDARY_RE.test(line)) break;
       // STOP when we have structurally left the read's enclosing block/method. Evaluate
       // AFTER the boundary regex but BEFORE matching this line as code: a line that closes
       // the enclosing method (its `}`) must not itself be a candidate write/guard.
-      depth += braceDelta(line);
+      const wasTricky = inTricky;
+      depth += braceScan(line);
       if (depth < 0) break;
+      // A line consumed ENTIRELY by a still-open template literal / block comment is not
+      // code — never match a guard or write inside it.
+      if (wasTricky && braceScanInTrickyState(braceScan)) continue;
       if (COMMENT_ONLY_RE.test(line)) continue; // never match code inside a comment
       // A qualifying guard = a conditional (if/ternary/early-return/comparison) that
       // reads a FIELD of the bound var (varName.field). A pure existence/truthiness
