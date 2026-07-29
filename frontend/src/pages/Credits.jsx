@@ -125,7 +125,7 @@ export default function Credits() {
       </div>
 
       <p className="text-xs text-gray-400 mt-4">
-        לרכישת קרדיטים פנו לתמיכה. תשלום מקוון (Cardcom / Meshulam / PayPlus) יתווסף בקרוב.
+        לרכישת קרדיטים פנו לתמיכה אם התשלום המקוון אינו זמין כרגע.
       </p>
     </div>
   );

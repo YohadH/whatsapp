@@ -110,16 +110,30 @@ const config = {
     tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE || '0'),
   },
 
-  // Credit-pack payments. 'manual' = super-admin approves top-ups (default until an
-  // Israeli card gateway + merchant account are set up). See services/payments.js.
+  // Credit-pack + subscription payments. 'manual' = super-admin approves top-ups by
+  // hand (fallback when no live gateway is configured). See services/payments.js.
   //
-  // PayPlus (Israeli card gateway) is the wired real provider. Set PAYMENTS_PROVIDER=payplus
-  // and supply the four PAYPLUS_* vars to go live. `payplus.enabled` is false (falls back to
-  // 'manual') until an api-key/secret-key/page-uid trio is present, so a mis-set provider can
-  // never leave a tenant unable to top up. baseUrl defaults to production; point it at the
-  // PayPlus sandbox host for test-mode verification.
+  // Stripe is the WIRED, LIVE provider (2026-07-29, replaces PayPlus per owner
+  // decision — task WA-DEV-STRIPE). Set PAYMENTS_PROVIDER=stripe and
+  // supply STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET to go live; `stripe.enabled` is
+  // false (falls back to 'manual') until both are present, so a mis-set provider can
+  // never leave a tenant unable to pay. Use Stripe TEST-MODE keys (sk_test_...) until
+  // the owner supplies live keys — never hardcode a key here, always read from env.
+  // PayPlus stays wired below as a secondary provider option (not deleted).
   payments: {
-    provider: process.env.PAYMENTS_PROVIDER || 'manual', // manual | payplus | meshulam | cardcom
+    provider: process.env.PAYMENTS_PROVIDER || 'manual', // manual | stripe | payplus | meshulam | cardcom
+    stripe: {
+      secretKey: process.env.STRIPE_SECRET_KEY || '',
+      publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || '',
+      // Webhook signing secret from the Stripe Dashboard (or `stripe listen` in dev),
+      // whsec_.... Required to verify checkout.session.completed / invoice.paid calls.
+      webhookSecret: process.env.STRIPE_WEBHOOK_SECRET || '',
+      // Recurring Price id (price_...) for the ₪490/mo HeyIL plan, created once in the
+      // Stripe Dashboard/API (Stripe Billing product). Not created dynamically per
+      // checkout — a stable recurring Price is what makes it a real subscription.
+      heyilPriceId: process.env.STRIPE_HEYIL_PRICE_ID || '',
+      enabled: Boolean(process.env.STRIPE_SECRET_KEY && process.env.STRIPE_WEBHOOK_SECRET),
+    },
     payplus: {
       // REST base — production; override with the sandbox host to test end-to-end.
       baseUrl: process.env.PAYPLUS_BASE_URL || 'https://restapi.payplus.co.il/api/v1.0',

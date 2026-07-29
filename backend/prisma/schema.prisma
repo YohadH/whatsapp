@@ -56,12 +56,21 @@ model Tenant {
   legalWebsiteUrl   String?
 
   // ── Billing / plan ──
-  plan                String    @default("trial") // trial | starter | pro
+  plan                String    @default("trial") // trial | starter | pro | heyil
   dailyBroadcastCap   Int       @default(250) // rolling-24h business-initiated cap
   monthlyMessageLimit Int       @default(1000) // soft cap on agent messages/period
   messagesThisPeriod  Int       @default(0)
   periodStartedAt     DateTime  @default(now())
   trialEndsAt         DateTime?
+
+  // ── Stripe Billing subscription (recurring HeyIL plan, ₪490/mo) ──
+  // Set by the checkout.session.completed webhook when a subscription Checkout
+  // Session completes (services/payments.js, routes/payments.js); kept in sync by
+  // invoice.paid on each renewal. Nullable — a tenant with no subscription (manual
+  // plan assignment, or the one-time credit-pack flow) leaves these unset.
+  stripeCustomerId     String? // Stripe Customer id (cus_...)
+  stripeSubscriptionId String? // Stripe Subscription id (sub_...)
+  subscriptionStatus   String? // active | past_due | canceled | incomplete (Stripe's own values)
 
   // ── AI credits (1 credit = 1 AI-answered message) ──
   // Monthly allotment = monthlyMessageLimit, consumed via creditsUsedThisPeriod
@@ -124,8 +133,8 @@ model CreditPurchase {
   credits     Int
   amountIls   Int // price in whole shekels
   status      String    @default("pending") // pending | paid | cancelled
-  provider    String    @default("manual") // manual | payplus | meshulam | cardcom
-  providerRef String? // gateway transaction id (when a real provider is wired)
+  provider    String    @default("manual") // manual | stripe | payplus | meshulam | cardcom
+  providerRef String? // gateway transaction id (Stripe Checkout Session id, PayPlus page_request_uid, ...)
   createdAt   DateTime  @default(now())
   paidAt      DateTime?
 

@@ -27,6 +27,7 @@ import uploadsRoutes, { uploadsDir } from './routes/uploads.js';
 import adminRoutes from './routes/admin.js';
 import settingsRoutes from './routes/settings.js';
 import creditsRoutes from './routes/credits.js';
+import billingRoutes from './routes/billing.js';
 import paymentsRoutes from './routes/payments.js';
 import integrationsRoutes, { googleCallbackRouter } from './routes/integrations.js';
 
@@ -76,7 +77,7 @@ app.use('/api/auth/login', authLimiter);
 app.use('/api/auth', authRoutes); // /login public, /me self-guards
 app.use('/api/whatsapp/simulate', authLimiter);
 app.use('/api/whatsapp', whatsappRoutes); // webhook (public) + simulator (auth-gated inside)
-app.use('/api/payments', paymentsRoutes); // PayPlus callback (public, signature-verified) + browser return
+app.use('/api/payments', paymentsRoutes); // Stripe + PayPlus callbacks (public, signature-verified) + browser return
 // Google OAuth callback is a PUBLIC top-level browser redirect from Google (no auth
 // header) — mounted here, BEFORE the auth'd /api/integrations, so it isn't bounced to
 // 401. It resolves the tenant from the single-use state nonce, not a session.
@@ -99,6 +100,7 @@ app.use('/api/uploads', requireAuth, withTenant, uploadsRoutes); // audio upload
 app.use('/api/broadcast', requireAuth, withTenant, broadcastRoutes); // bulk send from an uploaded list
 app.use('/api/settings', requireAuth, withTenant, settingsRoutes); // tenant self-serve WhatsApp connect
 app.use('/api/credits', requireAuth, withTenant, creditsRoutes); // AI credit balance + ledger
+app.use('/api/billing', requireAuth, withTenant, billingRoutes); // Stripe subscription checkout (HeyIL plan)
 app.use('/api/integrations', requireAuth, withTenant, integrationsRoutes); // Google add-on (flag-gated, OFF by default)
 
 // ── Serve the built admin frontend (single-service deploy) ───
