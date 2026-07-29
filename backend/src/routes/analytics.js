@@ -227,45 +227,87 @@ router.get(
   '/questions',
   asyncHandler(async (req, res) => {
     const tenantId = req.tenantId;
-    // Customers by intent
-    const byIntent = await prisma.analyticsEvent.groupBy({
-      by: ['conversationId'],
-      where: { tenantId, eventName: EVENTS.INTENT_DETECTED },
-    });
-    const intentCounts = await prisma.conversation.groupBy({
-      by: ['intent'],
-      where: { tenantId, intent: { not: null } },
-      _count: { intent: true },
-    });
+
+    // PERF (BUG-WA-ANALYTICS-SLOW-QUESTIONS): this handler previously issued six
+    // queries strictly SERIALLY (await one after another). On the remote Supabase
+    // pooler each round-trip is ~300ms+, so the latencies stacked into a
+    // multi-second — up to ~19s on the production tenant — response. The five
+    // INDEPENDENT queries below are now issued in one Promise.all wave; only the
+    // per-question `flowQuestion` lookup (which needs the `asked` ids) runs after.
+    //
+    // Two of the old queries were also structurally wasteful:
+    //  • byIntent used groupBy(['conversationId']) and then read ONLY `.length` —
+    //    materializing one row per distinct conversation (unbounded, no date/limit)
+    //    purely to count distinct conversations. Replaced with a single
+    //    COUNT(DISTINCT "conversationId") scalar aggregate (index [tenantId,eventName]).
+    //  • unanswered used a Message→Conversation relation filter
+    //    (`conversation: { needsHuman: true }`) with no supporting index on
+    //    Message(tenantId, senderType), forcing a correlated join scan. Replaced
+    //    with a two-step: fetch the (small, [tenantId,status]-indexed) needs-human
+    //    conversation ids, then filter messages by `conversationId in (...)` which
+    //    uses the Message(conversationId) index. On an empty needs-human set we skip
+    //    the message query entirely.
+    const [
+      distinctIntentConversations,
+      intentCounts,
+      needsHumanConvs,
+      asked,
+      answered,
+    ] = await Promise.all([
+      // Customers by intent → we only need the DISTINCT-conversation COUNT, not the rows.
+      prisma.$queryRaw`
+        SELECT COUNT(DISTINCT "conversationId")::int AS count
+        FROM "AnalyticsEvent"
+        WHERE "tenantId" = ${tenantId}
+          AND "eventName" = ${EVENTS.INTENT_DETECTED}
+          AND "conversationId" IS NOT NULL
+      `,
+      prisma.conversation.groupBy({
+        by: ['intent'],
+        where: { tenantId, intent: { not: null } },
+        _count: { intent: true },
+      }),
+      // Small, index-covered set of needs-human conversations for this tenant.
+      prisma.conversation.findMany({
+        where: { tenantId, needsHuman: true },
+        select: { id: true },
+      }),
+      // Drop-off by question (asked vs answered per question)
+      prisma.analyticsEvent.groupBy({
+        by: ['questionId'],
+        where: { tenantId, eventName: EVENTS.QUESTION_ASKED, questionId: { not: null } },
+        _count: { _all: true },
+      }),
+      prisma.analyticsEvent.groupBy({
+        by: ['questionId'],
+        where: { tenantId, eventName: EVENTS.QUESTION_ANSWERED, questionId: { not: null } },
+        _count: { _all: true },
+      }),
+    ]);
+
     const customersByIntent = intentCounts
       .map((i) => ({ intent: i.intent, count: i._count.intent }))
       .sort((a, b) => b.count - a.count);
 
-    // Most common unanswered → conversations that went to human
-    const unanswered = await prisma.message.findMany({
-      where: { tenantId, senderType: 'customer', conversation: { needsHuman: true } },
-      select: { messageText: true },
-      orderBy: { createdAt: 'desc' },
-      take: 50,
-    });
+    // Most common unanswered → last messages from conversations that went to human.
+    const needsHumanIds = needsHumanConvs.map((c) => c.id);
+    const unanswered = needsHumanIds.length
+      ? await prisma.message.findMany({
+          where: { tenantId, senderType: 'customer', conversationId: { in: needsHumanIds } },
+          select: { messageText: true },
+          orderBy: { createdAt: 'desc' },
+          take: 50,
+        })
+      : [];
 
-    // Drop-off by question (asked vs answered per question)
-    const asked = await prisma.analyticsEvent.groupBy({
-      by: ['questionId'],
-      where: { tenantId, eventName: EVENTS.QUESTION_ASKED, questionId: { not: null } },
-      _count: { _all: true },
-    });
-    const answered = await prisma.analyticsEvent.groupBy({
-      by: ['questionId'],
-      where: { tenantId, eventName: EVENTS.QUESTION_ANSWERED, questionId: { not: null } },
-      _count: { _all: true },
-    });
     const answeredMap = Object.fromEntries(answered.map((a) => [a.questionId, a._count._all]));
     const qIds = asked.map((a) => a.questionId);
-    const questions = await prisma.flowQuestion.findMany({
-      where: { id: { in: qIds }, tenantId },
-      select: { id: true, questionText: true, orderIndex: true },
-    });
+    const questions = qIds.length
+      ? await prisma.flowQuestion.findMany({
+          where: { id: { in: qIds }, tenantId },
+          select: { id: true, questionText: true, orderIndex: true },
+        })
+      : [];
     const qMap = Object.fromEntries(questions.map((q) => [q.id, q]));
     const dropOff = asked
       .map((a) => {
@@ -286,7 +328,7 @@ router.get(
       customersByIntent,
       mostCommonUnanswered: unanswered.map((u) => u.messageText),
       dropOffByQuestion: dropOff,
-      _distinctIntentConversations: byIntent.length,
+      _distinctIntentConversations: distinctIntentConversations[0]?.count ?? 0,
     });
   })
 );
