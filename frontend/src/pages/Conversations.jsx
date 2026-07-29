@@ -51,7 +51,11 @@ export default function Conversations() {
 
   return (
     <div>
-      <PageHeader title="שיחות" subtitle={`${data.total} שיחות בסך הכל`} />
+      <PageHeader
+        title="שיחות"
+        subtitle={`${data.total} שיחות בסך הכל`}
+        actions={<Link to="/leads" className="btn-ghost">צינור לידים ←</Link>}
+      />
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
         {STATUS_OPTIONS.map((s) => (

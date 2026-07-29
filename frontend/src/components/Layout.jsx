@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext.jsx';
 const NAV = [
   { to: '/', label: 'דאשבורד', icon: '📊', end: true },
   { to: '/conversations', label: 'שיחות', icon: '💬' },
+  { to: '/leads', label: 'צינור לידים', icon: '🧲' },
   { to: '/flows', label: 'תהליכים', icon: '🔀' },
   { to: '/knowledge-base', label: 'מאגר ידע', icon: '📚' },
   { to: '/links', label: 'קישורים', icon: '🔗' },

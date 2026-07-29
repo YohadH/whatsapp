@@ -8,6 +8,7 @@ import ResetPassword from './pages/ResetPassword.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Conversations from './pages/Conversations.jsx';
 import ConversationDetail from './pages/ConversationDetail.jsx';
+import Leads from './pages/Leads.jsx';
 import Flows from './pages/Flows.jsx';
 import KnowledgeBase from './pages/KnowledgeBase.jsx';
 import Links from './pages/Links.jsx';
@@ -38,6 +39,7 @@ export default function App() {
       <Route path="/" element={<Protected><Dashboard /></Protected>} />
       <Route path="/conversations" element={<Protected><Conversations /></Protected>} />
       <Route path="/conversations/:id" element={<Protected><ConversationDetail /></Protected>} />
+      <Route path="/leads" element={<Protected><Leads /></Protected>} />
       <Route path="/flows" element={<Protected><Flows /></Protected>} />
       <Route path="/knowledge-base" element={<Protected><KnowledgeBase /></Protected>} />
       <Route path="/links" element={<Protected><Links /></Protected>} />
