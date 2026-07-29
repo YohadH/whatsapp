@@ -41,17 +41,28 @@ import config from '../config/index.js';
 // ─────────────────────────────────────────────────────────────────────────────
 const router = Router();
 
-// Plans that the Stripe subscription lifecycle is allowed to overwrite for a subscribed
-// tenant. The subscription grant sets plan:'heyil'; a lapse reverts it to 'trial'. So while
-// a subscription is live, Stripe legitimately owns one of these two values. If a super-admin
-// MANUALLY re-plans a still-subscribed tenant to something else (e.g. 'pro'/'starter' via
-// PUT /api/admin/tenants/:id), that is a deliberate override and the webhook handlers below
-// must NOT clobber it back — so every grant/revert is gated on the CURRENT plan still being
-// one of these Stripe-managed values (matched in the updateMany WHERE, which also keeps the
-// write atomic — no separate read-then-write TOCTOU). A tenant an admin moved off these plans
-// falls out of the WHERE (0 rows updated) and keeps the admin's choice until the admin
-// clears the subscription or re-subscribes.
-const STRIPE_MANAGED_PLANS = ['heyil', 'trial'];
+// The Stripe subscription lifecycle is allowed to overwrite a subscribed tenant's plan only in
+// the cases where Stripe legitimately owns that value: the grant/renewal owns plan:'heyil', and
+// a lapse WE reverted owns plan:'trial'. If a super-admin MANUALLY re-plans a still-subscribed
+// tenant to something else (e.g. 'pro'/'starter' via PUT /api/admin/tenants/:id), that is a
+// deliberate override and the webhook handlers below must NOT clobber it back — so every
+// grant/revert is gated on the CURRENT plan (and, for the trial recovery case, the current
+// subscriptionStatus) in the updateMany WHERE, which also keeps the write atomic (no separate
+// read-then-write TOCTOU). A tenant whose (plan, status) falls out of the WHERE gets 0 rows
+// updated and keeps the admin's choice until the admin clears the subscription or re-subscribes.
+//
+// The subscriptionStatus values our OWN revert paths stamp when a Stripe subscription lapses
+// (invoice.payment_failed → 'past_due', customer.subscription.deleted → 'canceled'). This list
+// is the recovery discriminator for invoice.paid (see the handler below): a tenant sitting at
+// plan:'trial' is only re-granted heyil when its subscriptionStatus is one of these — i.e. the
+// system put it at trial because of a real Stripe lapse we are now recovering from. A tenant an
+// admin manually downgraded to trial while the subscription is still live keeps subscriptionStatus
+// 'active' (the admin plan-change path never touches subscriptionStatus), so it is NOT in this
+// set and is NOT clobbered back to heyil — the admin override is durable. This closes the gap the
+// plain plan-VALUE guard could not: 'trial' alone can't tell "trial-from-lapse" from
+// "trial-from-admin", but (plan, subscriptionStatus) together can. It uses only the existing,
+// live-applied subscriptionStatus column — no new column, so no live-DB schema drift (AP-T58/T71).
+const STRIPE_LAPSED_STATUSES = ['past_due', 'canceled'];
 
 // POST /api/payments/stripe/webhook
 router.post(
@@ -148,13 +159,26 @@ router.post(
       const subscriptionId = typeof invoice.subscription === 'string' ? invoice.subscription : invoice.subscription?.id;
       if (subscriptionId) {
         const ent = planEntitlements('heyil');
-        // Re-grant heyil ONLY if the tenant is still on a Stripe-managed plan (heyil after a
-        // renewal, or trial after a prior lapse we're now recovering from). A tenant an admin
-        // manually moved to another plan (e.g. 'pro') is NOT re-granted — the plan guard in the
-        // WHERE preserves the admin override. subscriptionStatus is still stamped for the audit
-        // trail via the same conditional write (it only matters for a Stripe-managed tenant).
+        // Re-grant heyil ONLY in the two cases where Stripe legitimately owns the plan value:
+        //   (a) plan:'heyil'  — a normal renewal of an active subscription (any status); OR
+        //   (b) plan:'trial' AND subscriptionStatus IN ('past_due','canceled') — a real lapse
+        //       WE reverted, now recovering (the card retried and succeeded).
+        // A tenant an admin manually moved to another plan (e.g. 'pro') falls out on the plan
+        // value. AND — the fix for the override-clobber gap the reviewer live-reproduced — a
+        // tenant an admin DELIBERATELY downgraded to 'trial' while still Stripe-subscribed keeps
+        // subscriptionStatus 'active' (admin plan-change never writes subscriptionStatus), so it
+        // matches NEITHER (a) nor (b) and is NOT re-granted: the admin override survives the next
+        // invoice.paid. The OR is expressed in the updateMany WHERE so the read+write stays one
+        // atomic conditional statement (no TOCTOU). Uses only the live-applied subscriptionStatus
+        // column — no schema change, no live-DB drift (AP-T58/T71).
         await prisma.tenant.updateMany({
-          where: { stripeSubscriptionId: subscriptionId, plan: { in: STRIPE_MANAGED_PLANS } },
+          where: {
+            stripeSubscriptionId: subscriptionId,
+            OR: [
+              { plan: 'heyil' },
+              { plan: 'trial', subscriptionStatus: { in: STRIPE_LAPSED_STATUSES } },
+            ],
+          },
           data: {
             plan: 'heyil',
             dailyBroadcastCap: ent.dailyBroadcastCap,

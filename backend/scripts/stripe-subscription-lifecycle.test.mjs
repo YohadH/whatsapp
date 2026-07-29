@@ -33,6 +33,15 @@
 //      nothing (fail-closed).
 //   L. Scoping: the revert matches by stripeSubscriptionId only — an UNRELATED heyil tenant
 //      with a different subscription id is untouched by another tenant's lapse.
+//   M1-M3. Admin override preservation: a super-admin who re-plans a still-subscribed tenant to
+//      'pro' is not clobbered by a later renewal / lapse / cancel.
+//   M4. Admin-downgrade-to-TRIAL override survives invoice.paid — the reviewer's live repro:
+//      plan:'trial' + subscriptionStatus:'active' (admin goodwill downgrade of a live-subscribed
+//      tenant) is NOT re-granted heyil, because the trial→heyil recovery gate now also requires a
+//      LAPSE subscriptionStatus. This is the whatsapp-agent-fix-stripe-trial-override-clobber fix.
+//   M5. Regression guard: a REAL lapse-created trial (subscriptionStatus 'past_due' OR 'canceled')
+//      IS still re-granted heyil on the recovering invoice.paid — the M4 fix did NOT break the
+//      legitimate lapse→recover round-trip.
 //
 // Run from backend/:  node scripts/stripe-subscription-lifecycle.test.mjs
 // Exit 0 = all cases pass; exit 1 = a case failed.
@@ -314,6 +323,85 @@ async function main() {
       await postEvent(server, 'invoice.paid', { subscription: subId });
       const after = await readTenant(t.id);
       check('M3 — admin-overridden pro tenant is NOT re-granted heyil on invoice.paid', isProUntouched(after), JSON.stringify(after));
+    }
+
+    // ── M4: admin-downgraded-to-TRIAL override survives invoice.paid (the reviewer's live repro) ──
+    //    An admin deliberately downgrades a STILL-Stripe-subscribed tenant to 'trial' (e.g. a
+    //    billing-dispute goodwill downgrade). That leaves plan:'trial' + subscriptionStatus:'active'
+    //    (the admin plan-change path never writes subscriptionStatus) + a live stripeSubscriptionId.
+    //    The plain plan-VALUE guard ('trial' is Stripe-managed) could not tell this apart from a
+    //    lapse-created trial and silently re-granted heyil on the next invoice.paid — the exact
+    //    override-clobber bug. The fix gates the trial→heyil recovery on subscriptionStatus being a
+    //    LAPSE status ('past_due'/'canceled'), so an 'active' admin-trial is NOT re-granted.
+    async function makeAdminTrialTenant(subId) {
+      const TAG = `_wa-stripe-lifecycle-admintrial-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      return prisma.tenant.create({
+        data: {
+          name: TAG,
+          slug: TAG,
+          plan: 'trial', // admin manually downgraded a live-subscribed tenant to trial
+          dailyBroadcastCap: TRIAL.dailyBroadcastCap,
+          monthlyMessageLimit: TRIAL.monthlyMessageLimit,
+          subscriptionStatus: 'active', // still an ACTIVE subscription — NOT a lapse
+          stripeCustomerId: `cus_${TAG}`,
+          stripeSubscriptionId: subId,
+        },
+        select: { id: true },
+      });
+    }
+    function isAdminTrialUntouched(t) {
+      // The override must be honored: plan stays trial, caps stay trial, status stays active.
+      return (
+        t.plan === 'trial' &&
+        t.dailyBroadcastCap === TRIAL.dailyBroadcastCap &&
+        t.monthlyMessageLimit === TRIAL.monthlyMessageLimit &&
+        t.subscriptionStatus === 'active'
+      );
+    }
+    {
+      const subId = `sub_M4_${Date.now()}`;
+      const t = await makeAdminTrialTenant(subId);
+      created.push(t.id);
+      const r = await postEvent(server, 'invoice.paid', { subscription: subId });
+      check('M4 — REAL route acks 200 on invoice.paid for admin-trial tenant', r.status === 200, `status=${r.status}`);
+      const after = await readTenant(t.id);
+      check(
+        'M4 — admin-downgraded trial tenant STAYS trial (override NOT clobbered to heyil)',
+        isAdminTrialUntouched(after),
+        JSON.stringify(after)
+      );
+    }
+
+    // ── M5: regression guard — a REAL lapse recovery MUST still re-grant heyil ──
+    //    The M4 fix must NOT break legitimate recovery: a tenant reverted to trial by a REAL
+    //    Stripe lapse (subscriptionStatus 'past_due' or 'canceled') must still be re-granted heyil
+    //    on the recovering invoice.paid. This is the key regression risk of the M4 gate change:
+    //    if we over-tightened, recovery would silently stop working. Assert BOTH lapse statuses.
+    for (const lapseStatus of ['past_due', 'canceled']) {
+      const subId = `sub_M5_${lapseStatus}_${Date.now()}`;
+      const TAG = `_wa-stripe-lifecycle-lapsetrial-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const t = await prisma.tenant.create({
+        data: {
+          name: TAG,
+          slug: TAG,
+          plan: 'trial', // reverted to trial by a real lapse (as our revert paths do)
+          dailyBroadcastCap: TRIAL.dailyBroadcastCap,
+          monthlyMessageLimit: TRIAL.monthlyMessageLimit,
+          subscriptionStatus: lapseStatus, // the lapse marker our revert paths stamp
+          stripeCustomerId: `cus_${TAG}`,
+          stripeSubscriptionId: subId,
+        },
+        select: { id: true },
+      });
+      created.push(t.id);
+      const r = await postEvent(server, 'invoice.paid', { subscription: subId });
+      check(`M5/${lapseStatus} — REAL route acks 200 on invoice.paid recovery`, r.status === 200, `status=${r.status}`);
+      const after = await readTenant(t.id);
+      check(
+        `M5/${lapseStatus} — lapse-created trial IS re-granted heyil on recovery (recovery not broken)`,
+        isHeyilGrant(after, 'active'),
+        JSON.stringify(after)
+      );
     }
   } finally {
     for (const id of created) {
