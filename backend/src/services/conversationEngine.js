@@ -15,6 +15,20 @@ import { notifyOwnerHandoff } from './handoffNotify.js';
 const MEDIA_ORDER_DELAY_MS = Number(process.env.MEDIA_SEND_DELAY_MS) || 1000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// True when a prisma write threw a unique-constraint violation (P2002) on the
+// Message.@@unique([tenantId, waMessageId]) idempotency index — i.e. another
+// concurrent webhook delivery for the SAME waMessageId already inserted this
+// inbound message. Used to make the inbound message.create() itself the atomic
+// dedup gate (see the TOCTOU note in handleIncomingMessage).
+function isDuplicateWaMessage(err) {
+  if (err?.code !== 'P2002') return false;
+  const target = err?.meta?.target;
+  // Prisma reports the offending unique index; match either the array form
+  // (['tenantId','waMessageId']) or the constraint-name string form.
+  if (Array.isArray(target)) return target.includes('waMessageId');
+  return typeof target === 'string' ? target.includes('waMessageId') : true;
+}
+
 // Explicit select for every Conversation read/write on the live inbound-message path.
 // DRIFT SAFETY (AP-T71): windowStartedAt/windowExpiresAt are added in migration
 // 4_conversation_credit_window but may not be applied on the live DB yet (deliberate
@@ -45,6 +59,16 @@ export async function handleIncomingMessage({ tenant, phone, text, name, rawPayl
 
   // 0) Idempotency: Meta delivers webhooks at-least-once. If we've already
   // stored this inbound message id for this tenant, skip re-processing.
+  //
+  // TOCTOU (AP-T72): this findUnique is only a cheap FAST-PATH — under two truly
+  // concurrent deliveries of the SAME waMessageId, both can pass this check before
+  // either has inserted the row, then both would create + reply (double answer +
+  // double LLM charge). The REAL guard is the inbound message.create() below, which
+  // is made the atomic dedup gate: it relies on the Message @@unique([tenantId,
+  // waMessageId]) constraint and treats a P2002 unique violation as "duplicate,
+  // skip reply". This mirrors the atomic-conditional TOCTOU fixes in credits.js
+  // (chargeAiCredit / markLowCreditNudge) and admin.js (mark-paid) — exactly one
+  // concurrent caller wins the insert; the loser bails without replying.
   if (waMessageId) {
     const seen = await prisma.message.findUnique({
       where: { tenantId_waMessageId: { tenantId, waMessageId } },
@@ -79,16 +103,26 @@ export async function handleIncomingMessage({ tenant, phone, text, name, rawPayl
       select: CONVERSATION_ENGINE_SELECT,
     });
     if (completed) {
-      await prisma.message.create({
-        data: {
-          tenantId,
-          conversationId: completed.id,
-          senderType: 'customer',
-          messageText: text,
-          waMessageId: waMessageId || null,
-          rawPayload: rawPayload || undefined,
-        },
-      });
+      // Atomic dedup gate: if a concurrent delivery of this waMessageId already
+      // stored the inbound message, this create throws P2002 → treat as duplicate
+      // and stop (this path is already silent, so there's nothing more to do).
+      try {
+        await prisma.message.create({
+          data: {
+            tenantId,
+            conversationId: completed.id,
+            senderType: 'customer',
+            messageText: text,
+            waMessageId: waMessageId || null,
+            rawPayload: rawPayload || undefined,
+          },
+        });
+      } catch (err) {
+        if (isDuplicateWaMessage(err)) {
+          return { conversation: null, agentResponse: null, replySent: false, duplicate: true };
+        }
+        throw err;
+      }
       await prisma.conversation.update({
         where: { id: completed.id },
         data: { lastMessage: text, lastActivityAt: new Date() },
@@ -120,17 +154,29 @@ export async function handleIncomingMessage({ tenant, phone, text, name, rawPayl
     });
   }
 
-  // 3) Save incoming message
-  await prisma.message.create({
-    data: {
-      tenantId,
-      conversationId: conversation.id,
-      senderType: 'customer',
-      messageText: text,
-      waMessageId: waMessageId || null,
-      rawPayload: rawPayload || undefined,
-    },
-  });
+  // 3) Save incoming message — THIS is the atomic dedup gate (see the TOCTOU note
+  // at step 0). Under two truly-concurrent deliveries of the same waMessageId, both
+  // may pass the step-0 findUnique fast-path, but only ONE insert can satisfy the
+  // Message @@unique([tenantId, waMessageId]) constraint. The loser throws P2002 →
+  // we return early (duplicate) BEFORE running the LLM, charging a credit, or
+  // sending a WhatsApp reply, so the customer gets exactly one answer, charged once.
+  try {
+    await prisma.message.create({
+      data: {
+        tenantId,
+        conversationId: conversation.id,
+        senderType: 'customer',
+        messageText: text,
+        waMessageId: waMessageId || null,
+        rawPayload: rawPayload || undefined,
+      },
+    });
+  } catch (err) {
+    if (isDuplicateWaMessage(err)) {
+      return { conversation: null, agentResponse: null, replySent: false, duplicate: true };
+    }
+    throw err;
+  }
   await trackEvent(EVENTS.MESSAGE_RECEIVED, {
     tenantId,
     conversationId: conversation.id,
