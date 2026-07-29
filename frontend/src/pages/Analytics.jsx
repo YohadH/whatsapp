@@ -6,6 +6,7 @@ import {
 import api from '../api/client.js';
 import { PageHeader } from '../components/Layout.jsx';
 import { Spinner, ErrorState, errMsg, INTENT_LABELS } from '../components/ui.jsx';
+import { buildAnalyticsCsv, downloadCsv, analyticsFilename } from '../lib/csv.js';
 
 const COLORS = ['#10b981', '#6366f1', '#f59e0b', '#ef4444', '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6'];
 
@@ -48,9 +49,20 @@ export default function Analytics() {
 
   const intentData = d.questions.customersByIntent.map((i) => ({ name: INTENT_LABELS[i.intent] || i.intent, value: i.count }));
 
+  // Client-side CSV export of every metric currently on the page — built from the
+  // already-fetched `d`, no extra API call. Sections match the panels below.
+  function exportCsv() {
+    const csv = buildAnalyticsCsv(d, INTENT_LABELS);
+    downloadCsv(analyticsFilename(), csv);
+  }
+
   return (
     <div>
-      <PageHeader title="אנליטיקס" subtitle="ביצועי הסוכן ב-30 הימים האחרונים" />
+      <PageHeader
+        title="אנליטיקס"
+        subtitle="ביצועי הסוכן ב-30 הימים האחרונים"
+        actions={<button className="btn-ghost" onClick={exportCsv}>⬇ ייצוא ל-CSV</button>}
+      />
 
       <div className="grid lg:grid-cols-2 gap-4">
         <Panel title="שיחות ולידים לאורך זמן">
