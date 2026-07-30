@@ -76,6 +76,11 @@ process.env.STRIPE_WEBHOOK_SECRET = 'whsec_test_do_not_use_in_prod_0000000000000
 process.env.STRIPE_HEYIL_PRICE_ID = 'price_test_heyil_490';
 process.env.PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || 'https://app.example.test';
 
+// Fail-closed prod-DB guard: refuse to run this destructive (create/delete tenant)
+// harness unless DATABASE_URL points at a disposable/local test DB (never live prod).
+const { assertTestDb } = await import('./lib/assert-test-db.mjs');
+assertTestDb();
+
 const prisma = (await import('../src/lib/prisma.js')).default;
 const app = (await import('../src/app.js')).default;
 const { planEntitlements } = await import('../src/lib/plans.js');

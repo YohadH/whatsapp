@@ -61,6 +61,11 @@ process.env.PAYPLUS_PAYMENT_PAGE_UID = 'test-page-uid';
 process.env.PAYPLUS_HASH_ENCODING = 'base64';
 process.env.PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || 'https://app.example.test';
 
+// Fail-closed prod-DB guard: refuse to run this destructive (create/delete tenant)
+// harness unless DATABASE_URL points at a disposable/local test DB (never live prod).
+const { assertTestDb } = await import('./lib/assert-test-db.mjs');
+assertTestDb();
+
 const prisma = (await import('../src/lib/prisma.js')).default;
 const app = (await import('../src/app.js')).default;
 const { verifyWebhookSignature, parseWebhook, createCheckout, activeProvider } = await import(

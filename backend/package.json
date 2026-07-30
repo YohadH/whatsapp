@@ -13,6 +13,8 @@
     "db:seed": "node prisma/seed.js",
     "db:studio": "prisma studio",
     "check:schema-parity": "node scripts/check-schema-migration-parity.mjs",
+    "test": "node scripts/run-payment-gate.mjs",
+    "test:payments": "node scripts/run-payment-gate.mjs",
     "postinstall": "prisma generate"
   },
   "prisma": {

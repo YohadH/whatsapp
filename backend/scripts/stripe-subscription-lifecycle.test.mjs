@@ -76,6 +76,11 @@ process.env.STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || 'sk_test_dummy_
 process.env.STRIPE_WEBHOOK_SECRET = TEST_WEBHOOK_SECRET;
 process.env.PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || 'https://app.example.test';
 
+// Fail-closed prod-DB guard: refuse to run this destructive (create/delete tenant)
+// harness unless DATABASE_URL points at a disposable/local test DB (never live prod).
+const { assertTestDb } = await import('./lib/assert-test-db.mjs');
+assertTestDb();
+
 const prisma = (await import('../src/lib/prisma.js')).default;
 const app = (await import('../src/app.js')).default;
 const { planEntitlements } = await import('../src/lib/plans.js');

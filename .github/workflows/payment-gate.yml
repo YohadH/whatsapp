@@ -1,0 +1,92 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Payment-path CI gate.
+#
+# WHY: money-path bugs in this backend (Stripe subscription lifecycle, credit
+# charging, payment webhooks) have needed repeated manual-only fixes (TOCTOU
+# double-credit races in chargeAiCredit() and the admin mark-paid endpoint —
+# commits cf4ceb5 / 2d5b9b3). This gate runs the 3 payment verification harnesses
+# automatically so this class of ordering / revenue-leak bug is caught by CI, not
+# only by manual review.
+#
+# DB SAFETY: the gate runs ONLY against a DISPOSABLE Postgres SERVICE CONTAINER
+# spun up fresh for this job (TEST_DATABASE_URL below). It NEVER touches the live
+# prod Supabase DB — no prod secret is referenced here, and the harnesses' own
+# assertTestDb() guard (backend/scripts/lib/assert-test-db.mjs) hard-refuses any
+# prod-looking DB URL as defense-in-depth.
+#
+# This is a CI workflow step (on push / PR), NOT a blocking pre-commit hook that
+# runs on every single commit.
+# ─────────────────────────────────────────────────────────────────────────────
+name: payment-gate
+
+on:
+  push:
+    paths:
+      - 'backend/src/routes/payments.js'
+      - 'backend/src/services/payments.js'
+      - 'backend/src/lib/credits.js'
+      - 'backend/src/lib/plans.js'
+      - 'backend/scripts/*payment*.test.mjs'
+      - 'backend/scripts/*stripe*.test.mjs'
+      - 'backend/scripts/run-payment-gate.mjs'
+      - 'backend/scripts/lib/assert-test-db.mjs'
+      - 'backend/prisma/schema.prisma'
+      - '.github/workflows/payment-gate.yml'
+  pull_request:
+    paths:
+      - 'backend/src/routes/payments.js'
+      - 'backend/src/services/payments.js'
+      - 'backend/src/lib/credits.js'
+      - 'backend/src/lib/plans.js'
+      - 'backend/scripts/*payment*.test.mjs'
+      - 'backend/scripts/*stripe*.test.mjs'
+      - 'backend/scripts/run-payment-gate.mjs'
+      - 'backend/scripts/lib/assert-test-db.mjs'
+      - 'backend/prisma/schema.prisma'
+  workflow_dispatch: {}
+
+jobs:
+  payment-gate:
+    runs-on: ubuntu-latest
+
+    # Disposable Postgres — created fresh for this job, destroyed with it. NOT prod.
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB: wa_test
+        ports:
+          - 55433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # Disposable test DB — 127.0.0.1 host makes assertTestDb()'s local-marker check pass
+      # and its prod-marker check fail (safe). The gate/harnesses read this via TEST_DATABASE_URL.
+      TEST_DATABASE_URL: postgresql://postgres:testpass@127.0.0.1:55433/wa_test
+      # Also export it as DATABASE_URL so `prisma db push` targets the disposable DB, not prod.
+      DATABASE_URL: postgresql://postgres:testpass@127.0.0.1:55433/wa_test
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install backend deps
+        run: npm ci
+
+      - name: Sync Prisma schema to the disposable test DB
+        run: npx prisma db push --skip-generate
+
+      - name: Run the payment-path gate (3 harnesses)
+        run: npm run test:payments
