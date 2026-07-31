@@ -7,9 +7,16 @@ import { Spinner, EmptyState, ErrorState, errMsg, INTENT_LABELS } from '../compo
 // ── Lead pipeline stages ──
 // The schema has NO dedicated pipeline-stage column on Conversation (only a lifecycle
 // `status` field: active | completed | abandoned | needs_human, plus needsHuman /
-// leadScore / linkSent). So — per the task's "don't invent new stages / check the
+// leadScore / linkSent / tags). So — per the task's "don't invent new stages / check the
 // schema first" — we DERIVE the sales stage from those existing fields rather than
 // adding a migration. stageOf() is the single source of truth for the mapping.
+//
+// The manual "engaged" (בטיפול) move is persisted via a reserved marker in the existing
+// `tags` JSON column (ENGAGED_TAG below) — NOT by overloading linkSent. Overloading
+// linkSent (the previous fix) inflated leadScore by +10 and falsely showed "נשלח קישור:
+// כן" for leads no link was ever sent to. `tags` is already migrated live, so this needs
+// no schema change (a new column would P2022 the list/detail routes until migrated).
+const ENGAGED_TAG = 'pipeline:engaged';
 const STAGES = [
   { key: 'new', label: 'חדש', hint: 'שיחות חדשות שטרם טופלו', color: 'bg-sky-500', soft: 'bg-sky-50 border-sky-200', text: 'text-sky-700' },
   { key: 'engaged', label: 'בטיפול', hint: 'שיחה פעילה — הלקוח מתעניין', color: 'bg-indigo-500', soft: 'bg-indigo-50 border-indigo-200', text: 'text-indigo-700' },
@@ -24,7 +31,10 @@ function stageOf(c) {
   if (c.status === 'abandoned') return 'lost';
   if (c.needsHuman || c.status === 'needs_human') return 'qualified';
   // active: split "new" vs "engaged" by whether we've made real progress with the lead.
-  if (c.linkSent || (c.leadScore || 0) >= 40 || c.flow) return 'engaged';
+  // The engaged signal is the manual ENGAGED_TAG marker OR organic progress (a real link
+  // sent, a warm score, or an active flow) — NOT linkSent standing in for a manual move.
+  const tags = Array.isArray(c.tags) ? c.tags : [];
+  if (tags.includes(ENGAGED_TAG) || c.linkSent || (c.leadScore || 0) >= 40 || c.flow) return 'engaged';
   return 'new';
 }
 
@@ -104,19 +114,27 @@ function stageAction(id, stage) {
   if (stage === 'won') return api.put(`/api/conversations/${id}/status`, { status: 'completed' });
   if (stage === 'lost') return api.put(`/api/conversations/${id}/status`, { status: 'abandoned' });
   if (stage === 'qualified') return api.post(`/api/conversations/${id}/assign-human`, {});
-  // engaged: reopen as active AND set linkSent:true — the primary signal stageOf reads
-  // to classify a card as "בטיפול". Without it the write is a no-op (a "new" card is
-  // already active), so the card would snap straight back to "new" on reload.
-  if (stage === 'engaged') return api.put(`/api/conversations/${id}/status`, { status: 'active', linkSent: true });
-  // new: reopen as active (unchanged behavior — the pre-existing transition).
-  return api.put(`/api/conversations/${id}/status`, { status: 'active' });
+  // engaged: reopen as active AND set the distinct engaged marker (engaged:true → backend
+  // adds ENGAGED_TAG to `tags`). This is what stageOf now reads, so the move persists on
+  // reload — without touching linkSent (which would inflate leadScore +10 and falsely show
+  // "נשלח קישור: כן"). status:'active' alone is a no-op (a "new" card is already active).
+  if (stage === 'engaged') return api.put(`/api/conversations/${id}/status`, { status: 'active', engaged: true });
+  // new: reopen as active AND clear the engaged marker (engaged:false → backend removes
+  // ENGAGED_TAG), so a card dragged back out of "בטיפול" doesn't snap straight back to it.
+  return api.put(`/api/conversations/${id}/status`, { status: 'active', engaged: false });
+}
+// Keep the optimistic patch in lock-step with what the backend persists, so the card
+// lands in the right column immediately (before the reload/refetch confirms it).
+function withEngagedTag(c, on) {
+  const tags = (Array.isArray(c.tags) ? c.tags : []).filter((t) => t !== ENGAGED_TAG);
+  return on ? [...tags, ENGAGED_TAG] : tags;
 }
 function optimisticPatch(c, stage) {
   if (stage === 'won') return { ...c, status: 'completed', needsHuman: false };
   if (stage === 'lost') return { ...c, status: 'abandoned', needsHuman: false };
   if (stage === 'qualified') return { ...c, status: 'needs_human', needsHuman: true };
-  if (stage === 'engaged') return { ...c, status: 'active', needsHuman: false, linkSent: true };
-  return { ...c, status: 'active', needsHuman: false };
+  if (stage === 'engaged') return { ...c, status: 'active', needsHuman: false, tags: withEngagedTag(c, true) };
+  return { ...c, status: 'active', needsHuman: false, tags: withEngagedTag(c, false) };
 }
 
 export default function Leads() {

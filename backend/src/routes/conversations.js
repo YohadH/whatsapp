@@ -63,23 +63,43 @@ router.get(
   })
 );
 
+// The reserved tag the Leads pipeline uses to mark a conversation as manually
+// "engaged" (dragged into the בטיפול column). It lives in the already-migrated
+// `tags` JSON column — deliberately NOT a new schema column (adding one and reading
+// it via the implicit-SELECT-* routes below would throw P2022 in production until a
+// live migration is owner-applied; see AP-T71 / the waPin incident) and deliberately
+// NOT `linkSent` (which must stay a truthful "a real link was sent" signal — it adds
+// +10 to leadScore in services/leadScore.js and drives the "נשלח קישור" UI row).
+export const ENGAGED_TAG = 'pipeline:engaged';
+
 // PUT /api/conversations/:id/status
 router.put(
   '/:id/status',
   asyncHandler(async (req, res) => {
-    const { status, needsHuman, linkSent } = req.body || {};
+    const { status, needsHuman, linkSent, engaged } = req.body || {};
     const valid = ['active', 'completed', 'abandoned', 'needs_human'];
     if (status && !valid.includes(status)) return res.status(400).json({ error: 'Invalid status' });
-    if (!(await ownedConversation(req.params.id, req.tenantId)))
-      return res.status(404).json({ error: 'Conversation not found' });
+    const existing = await ownedConversation(req.params.id, req.tenantId);
+    if (!existing) return res.status(404).json({ error: 'Conversation not found' });
     const data = {};
     if (status) data.status = status;
     if (needsHuman !== undefined) data.needsHuman = needsHuman;
-    // linkSent is the primary "engaged" signal read by the Leads pipeline (frontend
-    // stageOf: linkSent || leadScore>=40 || flow). Dragging a card into "בטיפול"
-    // (engaged) sets it true so the move actually persists — status:'active' alone is a
-    // no-op because a "new" card is already active. Accept an explicit boolean only.
+    // linkSent is set ONLY when a real trackable link is dispatched (conversationEngine)
+    // — never as a side effect of a pipeline drag. Kept accept-able here for
+    // completeness, but the Leads board no longer sends it (accept an explicit boolean
+    // only; a non-boolean is ignored).
     if (typeof linkSent === 'boolean') data.linkSent = linkSent;
+    // `engaged` is the distinct "manually moved into בטיפול" marker (a boolean from the
+    // Leads drag handler). It toggles the ENGAGED_TAG in the existing `tags` array
+    // rather than touching linkSent/leadScore, so a manual stage move never inflates the
+    // score or shows a false "link sent". We merge into the current tags (preserving any
+    // other tags) — this is a manual admin action, so the read-then-write here is not a
+    // hot concurrency path.
+    if (typeof engaged === 'boolean') {
+      const current = Array.isArray(existing.tags) ? existing.tags : [];
+      const withoutMarker = current.filter((t) => t !== ENGAGED_TAG);
+      data.tags = engaged ? [...withoutMarker, ENGAGED_TAG] : withoutMarker;
+    }
     const conversation = await prisma.conversation.update({ where: { id: req.params.id }, data });
     if (status === 'completed' || status === 'abandoned') {
       await trackEvent(EVENTS.CONVERSATION_CLOSED, {

@@ -1,5 +1,5 @@
 // Behavioral verification for the Leads-pipeline "drag to בטיפול (engaged)" fix
-// (board task whatsapp-agent-leads-kanban-dragging-card-to).
+// (board task whatsapp-agent-leads-kanban-engaged-drag-sets).
 //
 // The bug (found by QA via Playwright): dragging a lead card into the "engaged" column
 // returned HTTP 200 but was a structural no-op — the DB row was unchanged, so on reload
@@ -8,17 +8,32 @@
 // stageOf() classifies "engaged" from linkSent || leadScore>=40 || flow — none of which
 // that write set. So nothing changed.
 //
-// The fix: the engaged drop now sends { status:'active', linkSent:true }, and the backend
-// PUT /:id/status endpoint now accepts an explicit boolean linkSent. This proves it against
-// the REAL Express app + REAL DB:
-//   1. seed a throwaway tenant + customer + one conversation in a "new" state
-//      (status:'active', linkSent:false, leadScore:0, no flow → stageOf === 'new'),
+// The FIRST (partial) fix overloaded linkSent:true to force the classification. That was
+// WRONG: linkSent is a truthful "a real trackable link was dispatched" signal — it adds
+// +10 to leadScore (services/leadScore.js) and drives the "נשלח קישור: כן" row on
+// ConversationDetail. Overloading it inflated the score and lied about a link being sent.
+//
+// The CORRECT fix (this test): a DISTINCT engaged marker — the reserved tag
+// ENGAGED_TAG ('pipeline:engaged') in the already-migrated `tags` JSON column. The drag
+// handler now sends { status:'active', engaged:true } (or engaged:false when dragged back
+// out), the backend toggles ENGAGED_TAG in `tags` (preserving any other tags), and
+// stageOf() reads the tag. linkSent and leadScore are never touched by a manual drag.
+//
+// This proves it against the REAL Express app + REAL DB:
+//   1. seed a throwaway tenant + customer + one "new"-state conversation
+//      (status:'active', linkSent:false, leadScore:0, tags:[], no flow → stageOf === 'new'),
 //   2. boot the real app, authenticate as that tenant,
-//   3. reproduce the OLD no-op: PUT { status:'active' } → DB linkSent still false → still 'new',
-//   4. apply the FIX payload: PUT { status:'active', linkSent:true } → HTTP 200,
-//   5. read the row back FROM THE DB (Prisma) and assert linkSent === true (persisted),
-//   6. assert stageOf(row) === 'engaged' (the card now correctly classifies as engaged),
-//   7. clean up EXACTLY the ids created (never a prefix/pattern delete).
+//   3. reproduce the OLD no-op: PUT { status:'active' } → DB unchanged → still 'new',
+//   4. apply the FIX payload: PUT { status:'active', engaged:true } → HTTP 200,
+//   5. read the row back FROM THE DB (Prisma) and assert:
+//        - tags now contains ENGAGED_TAG (the engaged marker PERSISTED),
+//        - linkSent is STILL false (not overloaded — no false "link sent"),
+//        - leadScore is STILL 0 (not inflated by +10),
+//        - stageOf(row) === 'engaged' (the card sticks on reload),
+//   6. drag back to "new": PUT { status:'active', engaged:false } → ENGAGED_TAG removed,
+//      other tags preserved, stageOf === 'new' again,
+//   7. guard: a non-boolean `engaged` is ignored (no accidental coercion),
+//   8. clean up EXACTLY the ids created (never a prefix/pattern delete).
 //
 // Run:  node scripts/leads-drag-engaged.test.mjs   (from backend/ — a workspace package)
 
@@ -26,19 +41,23 @@ import http from 'node:http';
 import prisma from '../src/lib/prisma.js';
 import app from '../src/app.js';
 import { signToken } from '../src/middleware/auth.js';
+import { ENGAGED_TAG } from '../src/routes/conversations.js';
 
 // stageOf() copied verbatim from frontend/src/pages/Leads.jsx — the single source of truth
 // for how a conversation row is classified into a pipeline stage. Kept in sync by hand;
-// if the frontend derivation changes, this must too.
+// if the frontend derivation changes, this must too. (currentFlowId here mirrors the
+// frontend's `c.flow` — the list route hydrates a `flow` relation from currentFlowId.)
 function stageOf(c) {
   if (c.status === 'completed') return 'won';
   if (c.status === 'abandoned') return 'lost';
   if (c.needsHuman || c.status === 'needs_human') return 'qualified';
-  if (c.linkSent || (c.leadScore || 0) >= 40 || c.currentFlowId) return 'engaged';
+  const tags = Array.isArray(c.tags) ? c.tags : [];
+  if (tags.includes(ENGAGED_TAG) || c.linkSent || (c.leadScore || 0) >= 40 || c.currentFlowId) return 'engaged';
   return 'new';
 }
 
 const RUN_TAG = `dragtest-${Date.now()}`;
+const OTHER_TAG = 'keepme:unrelated'; // an unrelated tag that must survive engaged toggling
 const createdConversationIds = [];
 let tenantId = null;
 let customerId = null;
@@ -65,7 +84,8 @@ async function main() {
   });
   customerId = customer.id;
 
-  // A pristine "new" lead: active, no link sent, low score, no flow.
+  // A pristine "new" lead: active, no link sent, low score, no flow, one unrelated tag
+  // (to prove the engaged toggle preserves existing tags rather than clobbering them).
   const conv = await prisma.conversation.create({
     data: {
       tenantId,
@@ -74,6 +94,7 @@ async function main() {
       status: 'active',
       linkSent: false,
       leadScore: 0,
+      tags: [OTHER_TAG],
       lastMessage: `${RUN_TAG} hello`,
     },
   });
@@ -113,9 +134,11 @@ async function main() {
   async function dbRow() {
     return prisma.conversation.findUnique({
       where: { id: conv.id },
-      select: { id: true, status: true, needsHuman: true, linkSent: true, leadScore: true, currentFlowId: true },
+      select: { id: true, status: true, needsHuman: true, linkSent: true, leadScore: true, currentFlowId: true, tags: true },
     });
   }
+  const hasEngagedTag = (row) => Array.isArray(row.tags) && row.tags.includes(ENGAGED_TAG);
+  const hasOtherTag = (row) => Array.isArray(row.tags) && row.tags.includes(OTHER_TAG);
 
   try {
     // ── 3. Reproduce the OLD no-op: PUT { status:'active' } changes nothing meaningful ──
@@ -124,30 +147,42 @@ async function main() {
     const oldRes = await apiPut(`/api/conversations/${conv.id}/status`, { status: 'active' });
     assert(oldRes.status === 200, `old payload returns HTTP 200 (got ${oldRes.status})`);
     const afterOld = await dbRow();
-    assert(afterOld.linkSent === false, `linkSent still false after old payload — DB unchanged (the no-op bug)`);
+    assert(!hasEngagedTag(afterOld), `no ENGAGED_TAG after old payload — DB unchanged (the no-op bug)`);
     assert(stageOf(afterOld) === 'new', `card still classifies as "new" after old payload (stageOf=${stageOf(afterOld)}) → snaps back on reload`);
-    assert(before.linkSent === afterOld.linkSent, `old payload is a structural no-op on the engaged signal`);
 
     // ── 4. Apply the FIX payload the fixed Leads.jsx now sends ──
-    console.log('\n— NEW behavior (the fix): PUT { status:"active", linkSent:true }');
-    const fixRes = await apiPut(`/api/conversations/${conv.id}/status`, { status: 'active', linkSent: true });
+    console.log('\n— NEW behavior (the fix): PUT { status:"active", engaged:true }');
+    const fixRes = await apiPut(`/api/conversations/${conv.id}/status`, { status: 'active', engaged: true });
     assert(fixRes.status === 200, `fix payload returns HTTP 200 (got ${fixRes.status})`);
 
-    // ── 5. Read back FROM THE DB and assert it actually persisted ──
+    // ── 5. Read back FROM THE DB and assert the engaged marker persisted WITHOUT side effects ──
     const afterFix = await dbRow();
-    assert(afterFix.linkSent === true, `linkSent === true in the DB after fix payload — the write PERSISTED`);
-
-    // ── 6. The card now correctly classifies as engaged ──
+    assert(hasEngagedTag(afterFix), `tags now contains ENGAGED_TAG in the DB — the engaged move PERSISTED`);
+    assert(hasOtherTag(afterFix), `the pre-existing unrelated tag survived the toggle (tags not clobbered)`);
+    assert(afterFix.linkSent === false, `linkSent STILL false — a manual engaged move did NOT overload it (no false "נשלח קישור")`);
+    assert(afterFix.leadScore === 0, `leadScore STILL 0 — a manual engaged move did NOT inflate it by +10`);
     assert(stageOf(afterFix) === 'engaged', `card now classifies as "engaged" (stageOf=${stageOf(afterFix)}) → sticks on reload`);
 
-    // ── Guard: non-boolean linkSent is ignored (no accidental coercion) ──
-    console.log('\n— Guard: endpoint accepts only an explicit boolean linkSent');
-    const badRes = await apiPut(`/api/conversations/${conv.id}/status`, { status: 'active', linkSent: 'yes' });
-    assert(badRes.status === 200, `non-boolean linkSent still returns 200 (ignored, not 400) (got ${badRes.status})`);
-    const afterBad = await dbRow();
-    assert(afterBad.linkSent === true, `linkSent unchanged by non-boolean value (still true — string 'yes' was ignored)`);
+    // ── 6. Drag back OUT to "new": PUT { status:'active', engaged:false } removes the marker ──
+    console.log('\n— Drag back to "new": PUT { status:"active", engaged:false }');
+    const backRes = await apiPut(`/api/conversations/${conv.id}/status`, { status: 'active', engaged: false });
+    assert(backRes.status === 200, `engaged:false payload returns HTTP 200 (got ${backRes.status})`);
+    const afterBack = await dbRow();
+    assert(!hasEngagedTag(afterBack), `ENGAGED_TAG removed after engaged:false — card can leave "בטיפול"`);
+    assert(hasOtherTag(afterBack), `the unrelated tag STILL survives after removing the engaged marker`);
+    assert(stageOf(afterBack) === 'new', `card classifies as "new" again (stageOf=${stageOf(afterBack)})`);
 
-    console.log('\n✅ ALL ASSERTIONS PASSED — dragging a card to "בטיפול" now persists linkSent and the card stays engaged on reload.');
+    // ── 7. Guard: a non-boolean `engaged` is ignored (no accidental coercion) ──
+    console.log('\n— Guard: endpoint accepts only an explicit boolean engaged');
+    // First set it true so we can prove a bad value neither adds nor removes the marker.
+    await apiPut(`/api/conversations/${conv.id}/status`, { status: 'active', engaged: true });
+    assert(hasEngagedTag(await dbRow()), `precondition: ENGAGED_TAG set before the guard check`);
+    const badRes = await apiPut(`/api/conversations/${conv.id}/status`, { status: 'active', engaged: 'yes' });
+    assert(badRes.status === 200, `non-boolean engaged still returns 200 (ignored, not 400) (got ${badRes.status})`);
+    const afterBad = await dbRow();
+    assert(hasEngagedTag(afterBad), `ENGAGED_TAG unchanged by non-boolean value (string 'yes' was ignored, not treated as truthy/falsy)`);
+
+    console.log('\n✅ ALL ASSERTIONS PASSED — dragging a card to "בטיפול" now persists a distinct engaged marker (ENGAGED_TAG in tags) without touching linkSent/leadScore; the card sticks on reload and can be dragged back out.');
   } finally {
     await new Promise((r) => server.close(r));
   }
