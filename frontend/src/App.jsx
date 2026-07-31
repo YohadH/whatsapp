@@ -10,8 +10,7 @@ import Conversations from './pages/Conversations.jsx';
 import ConversationDetail from './pages/ConversationDetail.jsx';
 import Leads from './pages/Leads.jsx';
 import Flows from './pages/Flows.jsx';
-import KnowledgeBase from './pages/KnowledgeBase.jsx';
-import Links from './pages/Links.jsx';
+import ContentHub from './pages/ContentHub.jsx';
 import Analytics from './pages/Analytics.jsx';
 import Broadcast from './pages/Broadcast.jsx';
 import Credits from './pages/Credits.jsx';
@@ -41,8 +40,10 @@ export default function App() {
       <Route path="/conversations/:id" element={<Protected><ConversationDetail /></Protected>} />
       <Route path="/leads" element={<Protected><Leads /></Protected>} />
       <Route path="/flows" element={<Protected><Flows /></Protected>} />
-      <Route path="/knowledge-base" element={<Protected><KnowledgeBase /></Protected>} />
-      <Route path="/links" element={<Protected><Links /></Protected>} />
+      <Route path="/content" element={<Protected><ContentHub /></Protected>} />
+      {/* Old separate routes now redirect into the combined content hub. */}
+      <Route path="/knowledge-base" element={<Navigate to="/content" replace />} />
+      <Route path="/links" element={<Navigate to="/content" replace />} />
       <Route path="/analytics" element={<Protected><Analytics /></Protected>} />
       <Route path="/broadcast" element={<Protected><Broadcast /></Protected>} />
       <Route path="/credits" element={<Protected><Credits /></Protected>} />

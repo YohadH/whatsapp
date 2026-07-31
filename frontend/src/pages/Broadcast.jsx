@@ -1,12 +1,25 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client.js';
 import { PageHeader } from '../components/Layout.jsx';
-import { Spinner } from '../components/ui.jsx';
+import { Spinner, Modal } from '../components/ui.jsx';
+
+const STATUS_BADGE = {
+  APPROVED: 'bg-green-100 text-green-700',
+  PENDING: 'bg-amber-100 text-amber-700',
+  REJECTED: 'bg-red-100 text-red-600',
+};
+const STATUS_HE = { APPROVED: 'מאושרת', PENDING: 'ממתינה לאישור', REJECTED: 'נדחתה' };
 
 export default function Broadcast() {
   const [templates, setTemplates] = useState([]);
+  const [allTemplates, setAllTemplates] = useState([]);
   const [configured, setConfigured] = useState(false);
   const [loadingTpl, setLoadingTpl] = useState(true);
+  // Create-template modal.
+  const [showCreate, setShowCreate] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createErr, setCreateErr] = useState('');
+  const [newTpl, setNewTpl] = useState({ name: '', category: 'UTILITY', language: 'he', bodyText: '', footerText: '', examples: '' });
 
   const [mode, setMode] = useState('template'); // 'template' | 'text'
   const [templateName, setTemplateName] = useState('');
@@ -34,17 +47,38 @@ export default function Broadcast() {
   const refreshQuota = () =>
     api.get('/api/broadcast/quota').then((r) => setQuota(r.data)).catch(() => {});
 
-  useEffect(() => {
-    api
+  function loadTemplates() {
+    return api
       .get('/api/broadcast/templates')
       .then((r) => {
         setConfigured(r.data.configured);
-        const approved = (r.data.templates || []).filter((t) => t.status === 'APPROVED');
-        setTemplates(approved);
+        const all = r.data.templates || [];
+        setAllTemplates(all);
+        setTemplates(all.filter((t) => t.status === 'APPROVED'));
       })
       .catch(() => setConfigured(false))
       .finally(() => setLoadingTpl(false));
+  }
 
+  async function createTemplate(e) {
+    e.preventDefault();
+    setCreateErr('');
+    setCreating(true);
+    try {
+      const r = await api.post('/api/broadcast/templates', newTpl);
+      setShowCreate(false);
+      setNewTpl({ name: '', category: 'UTILITY', language: 'he', bodyText: '', footerText: '', examples: '' });
+      await loadTemplates();
+      alert(`התבנית נשלחה ל-Meta לאישור (סטטוס: ${r.data.status || 'PENDING'}). היא תופיע כזמינה לשליחה לאחר האישור.`);
+    } catch (err) {
+      setCreateErr(err.response?.data?.error || 'יצירת התבנית נכשלה');
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  useEffect(() => {
+    loadTemplates();
     refreshQuota();
     // Re-attach to the last campaign (it keeps running server-side even if the
     // page was closed), or show one that's waiting to be resumed.
@@ -196,7 +230,74 @@ export default function Broadcast() {
 
   return (
     <div>
-      <PageHeader title="שליחה מרובה" subtitle="העלאת רשימת מספרים ושליחת הודעה לכולם" />
+      <PageHeader
+        title="שליחה מרובה"
+        subtitle="העלאת רשימת מספרים ושליחת הודעה לכולם"
+        actions={<button className="btn-primary" onClick={() => setShowCreate(true)}>+ תבנית חדשה</button>}
+      />
+
+      {/* Template approval status */}
+      {allTemplates.length > 0 && (
+        <div className="card mb-4">
+          <h3 className="font-semibold text-sm mb-2">התבניות שלי</h3>
+          <div className="flex flex-wrap gap-2">
+            {allTemplates.map((t) => (
+              <span key={`${t.name}:${t.language}`} className={`badge ${STATUS_BADGE[t.status] || 'bg-gray-100 text-gray-600'}`}>
+                {t.name} · {STATUS_HE[t.status] || t.status}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {showCreate && (
+        <Modal open title="יצירת תבנית חדשה" onClose={() => setShowCreate(false)}>
+          <form onSubmit={createTemplate} className="space-y-3">
+            <p className="text-xs text-gray-500">
+              התבנית נשלחת ל-Meta לאישור (בדרך כלל דקות עד 24 שעות). ניתן לשלוח אותה רק לאחר שאושרה.
+            </p>
+            <div>
+              <label className="label">שם התבנית (אנגלית, מספרים וקו תחתון)</label>
+              <input className="input" value={newTpl.name} onChange={(e) => setNewTpl((t) => ({ ...t, name: e.target.value }))} placeholder="appointment_reminder" required />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="label">קטגוריה</label>
+                <select className="input" value={newTpl.category} onChange={(e) => setNewTpl((t) => ({ ...t, category: e.target.value }))}>
+                  <option value="UTILITY">שירותית (Utility)</option>
+                  <option value="MARKETING">שיווקית (Marketing)</option>
+                  <option value="AUTHENTICATION">אימות (Authentication)</option>
+                </select>
+              </div>
+              <div>
+                <label className="label">שפה</label>
+                <select className="input" value={newTpl.language} onChange={(e) => setNewTpl((t) => ({ ...t, language: e.target.value }))}>
+                  <option value="he">עברית</option>
+                  <option value="en_US">English (US)</option>
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="label">תוכן ההודעה</label>
+              <textarea className="input" style={{ height: '6rem' }} value={newTpl.bodyText} onChange={(e) => setNewTpl((t) => ({ ...t, bodyText: e.target.value }))} placeholder="שלום {{1}}, התור שלך נקבע ל-{{2}}. נשמח לראותך!" required />
+              <p className="text-xs text-gray-400 mt-1">השתמשו ב-{'{{1}}'}, {'{{2}}'} למשתנים דינמיים.</p>
+            </div>
+            <div>
+              <label className="label">דוגמאות למשתנים (מופרד בפסיקים, לפי הסדר)</label>
+              <input className="input" value={newTpl.examples} onChange={(e) => setNewTpl((t) => ({ ...t, examples: e.target.value }))} placeholder="ישראל, מחר בשעה 10:00" />
+            </div>
+            <div>
+              <label className="label">כותרת תחתונה (אופציונלי)</label>
+              <input className="input" value={newTpl.footerText} onChange={(e) => setNewTpl((t) => ({ ...t, footerText: e.target.value }))} placeholder="להסרה השב הסר" />
+            </div>
+            {createErr && <div className="text-sm text-red-600 bg-red-50 rounded p-2">{createErr}</div>}
+            <div className="flex justify-end gap-2">
+              <button type="button" className="btn-ghost" onClick={() => setShowCreate(false)}>ביטול</button>
+              <button className="btn-primary" disabled={creating}>{creating ? 'שולח…' : 'שליחה לאישור'}</button>
+            </div>
+          </form>
+        </Modal>
+      )}
 
       {/* Compliance warning */}
       <div className="card mb-4 border-r-4 border-amber-400 bg-amber-50">

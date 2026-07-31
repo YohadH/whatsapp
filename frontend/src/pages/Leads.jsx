@@ -61,11 +61,16 @@ function scoreTone(score) {
   return 'bg-gray-100 text-gray-500';
 }
 
-function LeadCard({ c }) {
+// A draggable lead card. The card BODY is the drag handle; the "open" link at the
+// bottom is the click target (so dragging never accidentally navigates).
+function LeadCard({ c, onDragStart, onDragEnd, dragging }) {
   return (
-    <Link
-      to={`/conversations/${c.id}`}
-      className="block rounded-xl border border-gray-200 bg-white p-3 shadow-sm hover:shadow-md hover:border-brand-300 transition"
+    <div
+      draggable
+      onDragStart={(e) => onDragStart(e, c)}
+      onDragEnd={onDragEnd}
+      className={`rounded-xl border border-gray-200 bg-white p-3 shadow-sm transition cursor-grab active:cursor-grabbing
+        ${dragging ? 'opacity-40 ring-2 ring-brand-300' : 'hover:shadow-md hover:border-brand-300'}`}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
@@ -80,14 +85,41 @@ function LeadCard({ c }) {
         {c.flow?.name && <span className="badge bg-gray-100 text-gray-500">{c.flow.name}</span>}
         <span className="mr-auto">{c.lastActivityAt ? new Date(c.lastActivityAt).toLocaleDateString('he-IL') : ''}</span>
       </div>
-    </Link>
+      <Link
+        to={`/conversations/${c.id}`}
+        draggable={false}
+        onClick={(e) => e.stopPropagation()}
+        className="mt-2.5 block text-center text-xs font-medium text-brand-700 border border-brand-100 rounded-lg py-1.5 hover:bg-brand-50 transition"
+      >
+        פתח שיחה ←
+      </Link>
+    </div>
   );
+}
+
+// Dropping a card on a column changes the conversation's underlying status (stages are
+// derived, not stored — see stageOf). Won/lost/qualified map cleanly; new & engaged both
+// reopen the conversation as "active" (it then lands in new or engaged by its progress).
+function stageAction(id, stage) {
+  if (stage === 'won') return api.put(`/api/conversations/${id}/status`, { status: 'completed' });
+  if (stage === 'lost') return api.put(`/api/conversations/${id}/status`, { status: 'abandoned' });
+  if (stage === 'qualified') return api.post(`/api/conversations/${id}/assign-human`, {});
+  return api.put(`/api/conversations/${id}/status`, { status: 'active' });
+}
+function optimisticPatch(c, stage) {
+  if (stage === 'won') return { ...c, status: 'completed', needsHuman: false };
+  if (stage === 'lost') return { ...c, status: 'abandoned', needsHuman: false };
+  if (stage === 'qualified') return { ...c, status: 'needs_human', needsHuman: true };
+  return { ...c, status: 'active', needsHuman: false };
 }
 
 export default function Leads() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [dragId, setDragId] = useState(null);
+  const [overStage, setOverStage] = useState(null);
+  const [moveErr, setMoveErr] = useState('');
 
   function load() {
     setLoading(true);
@@ -113,13 +145,41 @@ export default function Leads() {
     return g;
   }, [items]);
 
+  function onDragStart(e, c) {
+    setDragId(c.id);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', c.id);
+  }
+  function onDragEnd() {
+    setDragId(null);
+    setOverStage(null);
+  }
+  async function onDrop(e, stageKey) {
+    e.preventDefault();
+    setOverStage(null);
+    const id = e.dataTransfer.getData('text/plain') || dragId;
+    setDragId(null);
+    const c = items.find((x) => x.id === id);
+    if (!c || stageOf(c) === stageKey) return;
+    setMoveErr('');
+    setItems((prev) => prev.map((x) => (x.id === id ? optimisticPatch(x, stageKey) : x))); // optimistic
+    try {
+      await stageAction(id, stageKey);
+    } catch (err) {
+      setMoveErr(errMsg(err, 'עדכון השלב נכשל'));
+      load(); // revert to server truth
+    }
+  }
+
   return (
     <div>
       <PageHeader
         title="צינור לידים"
-        subtitle={`${items.length} לידים לפי שלב בתהליך`}
+        subtitle={`${items.length} לידים לפי שלב בתהליך · גררו כרטיס בין העמודות כדי לעדכן את השלב`}
         actions={<Link to="/conversations" className="btn-ghost">תצוגת רשימה ←</Link>}
       />
+
+      {moveErr && <div className="card bg-red-50 text-red-600 text-sm mb-3">{moveErr}</div>}
 
       {loading ? (
         <Spinner />
@@ -131,6 +191,7 @@ export default function Leads() {
         <div className="flex gap-4 overflow-x-auto pb-4">
           {STAGES.map((stage) => {
             const cards = grouped[stage.key];
+            const isOver = overStage === stage.key;
             return (
               <div key={stage.key} className="w-72 shrink-0">
                 <div className={`rounded-t-xl border-x border-t px-3 py-2.5 ${stage.soft}`}>
@@ -143,11 +204,19 @@ export default function Leads() {
                   </div>
                   <div className="text-[11px] text-gray-400 mt-0.5">{stage.hint}</div>
                 </div>
-                <div className="rounded-b-xl border border-gray-200 bg-gray-50/60 p-2 space-y-2 min-h-[8rem]">
+                <div
+                  onDragOver={(e) => { e.preventDefault(); if (overStage !== stage.key) setOverStage(stage.key); }}
+                  onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setOverStage((s) => (s === stage.key ? null : s)); }}
+                  onDrop={(e) => onDrop(e, stage.key)}
+                  className={`rounded-b-xl border p-2 space-y-2 min-h-[8rem] transition-colors
+                    ${isOver ? 'border-brand-400 border-dashed bg-brand-50/70' : 'border-gray-200 bg-gray-50/60'}`}
+                >
                   {cards.length === 0 ? (
-                    <div className="text-center text-xs text-gray-300 py-6">אין לידים בשלב זה</div>
+                    <div className="text-center text-xs text-gray-300 py-6">{isOver ? 'שחררו כאן' : 'אין לידים בשלב זה'}</div>
                   ) : (
-                    cards.map((c) => <LeadCard key={c.id} c={c} />)
+                    cards.map((c) => (
+                      <LeadCard key={c.id} c={c} onDragStart={onDragStart} onDragEnd={onDragEnd} dragging={dragId === c.id} />
+                    ))
                   )}
                 </div>
               </div>

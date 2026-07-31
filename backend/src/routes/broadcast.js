@@ -3,7 +3,7 @@ import multer from 'multer';
 import * as XLSX from 'xlsx';
 import { asyncHandler } from '../middleware/error.js';
 import { sheetToRows } from '../lib/sheet.js';
-import { listMessageTemplates, checkToken } from '../services/whatsapp.js';
+import { listMessageTemplates, createMessageTemplate, checkToken } from '../services/whatsapp.js';
 import { tenantWhatsAppCreds } from '../lib/tenantContext.js';
 import { normalizePhone } from '../lib/phone.js';
 import prisma from '../lib/prisma.js';
@@ -37,6 +37,44 @@ router.get(
   asyncHandler(async (req, res) => {
     const { configured, templates } = await listMessageTemplates(tenantWhatsAppCreds(req.tenant));
     res.json({ configured, templates });
+  })
+);
+
+// POST /api/broadcast/templates → create a template + submit to Meta for approval.
+// body: { name, category, language, bodyText, footerText?, examples? (comma string or array) }
+const TEMPLATE_CATEGORIES = ['UTILITY', 'MARKETING', 'AUTHENTICATION'];
+router.post(
+  '/templates',
+  asyncHandler(async (req, res) => {
+    const b = req.body || {};
+    // Meta requires the name be lowercase letters/numbers/underscores only.
+    const name = String(b.name || '')
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9_]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 60);
+    if (!name) return res.status(400).json({ error: 'שם תבנית נדרש (אותיות באנגלית, מספרים וקו תחתון)' });
+    if (!b.bodyText || !String(b.bodyText).trim()) return res.status(400).json({ error: 'תוכן ההודעה נדרש' });
+
+    const category = TEMPLATE_CATEGORIES.includes(b.category) ? b.category : 'UTILITY';
+    const examples = Array.isArray(b.examples)
+      ? b.examples
+      : String(b.examples || '').split(',').map((s) => s.trim()).filter(Boolean);
+
+    try {
+      const result = await createMessageTemplate(tenantWhatsAppCreds(req.tenant), {
+        name,
+        category,
+        language: b.language || 'he',
+        bodyText: String(b.bodyText),
+        footerText: b.footerText,
+        examples,
+      });
+      res.status(201).json(result); // { id, status: 'PENDING', category }
+    } catch (err) {
+      res.status(err.status || 502).json({ error: err.message });
+    }
   })
 );
 

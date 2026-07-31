@@ -175,6 +175,42 @@ export async function listMessageTemplates(creds) {
 }
 
 /**
+ * Create a WhatsApp message template and submit it to Meta for approval.
+ * Meta reviews it (usually minutes, up to ~24h) and it can only be sent once APPROVED.
+ * `bodyText` may contain {{1}}, {{2}}… variables — Meta requires an example value per
+ * variable, so we pass `examples` (auto-filled with placeholders if the caller omits).
+ * Returns Meta's { id, status, category } (status starts as PENDING).
+ */
+export async function createMessageTemplate(creds, { name, category, language, bodyText, footerText, examples = [] }) {
+  const c = normalizeCreds(creds);
+  if (!c.token || !c.businessAccountId) {
+    throw Object.assign(new Error('WhatsApp account not configured for this tenant'), { status: 400 });
+  }
+
+  const body = { type: 'BODY', text: bodyText };
+  const varCount = (bodyText.match(/\{\{\s*\d+\s*\}\}/g) || []).length;
+  if (varCount > 0) {
+    const ex = [...examples];
+    while (ex.length < varCount) ex.push(`דוגמה ${ex.length + 1}`);
+    body.example = { body_text: [ex.slice(0, varCount)] };
+  }
+
+  const components = [body];
+  if (footerText && footerText.trim()) components.push({ type: 'FOOTER', text: footerText.trim() });
+
+  const res = await fetch(`https://graph.facebook.com/${c.apiVersion}/${c.businessAccountId}/message_templates`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${c.token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, category, language, components }),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json.error) {
+    throw Object.assign(new Error(json.error?.message || `HTTP ${res.status}`), { status: res.status });
+  }
+  return json; // { id, status: 'PENDING', category }
+}
+
+/**
  * Read-only check of an access token via Graph debug_token. Returns validity +
  * expiry + scopes (no message is sent).
  */
