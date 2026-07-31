@@ -1,0 +1,113 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Regression CI gate — concurrency (TOCTOU) + leads-pipeline harnesses.
+#
+# WHY: sibling to payment-gate.yml. Three dedicated regression harnesses were
+# written for real bugs but stayed MANUAL-ONLY, so a future edit to the inbound
+# dedup / orphan-conversation cleanup logic (conversationEngine.js) or the leads
+# drag-to-engaged flow (Leads.jsx + conversations.js) could silently reintroduce:
+#   - a TOCTOU double-insert on a redelivered waMessageId (double reply + double
+#     LLM charge),
+#   - a cascade DATA-LOSS race that destroys a distinct customer message during
+#     orphan-conversation cleanup,
+#   - the "drag to בטיפול returns 200 but is a DB no-op" leads-stage bug.
+# This gate runs those 3 harnesses automatically on push / PR so that class of
+# ordering / data-loss / no-op-write bug is caught by CI, not only by manual runs.
+#
+# DB SAFETY: identical to payment-gate.yml — the gate runs ONLY against a
+# DISPOSABLE Postgres SERVICE CONTAINER spun up fresh for this job. It NEVER
+# touches the live prod Supabase DB: no prod secret is referenced here, no .env is
+# present in CI (backend/.env is gitignored), and DATABASE_URL is overridden below
+# to point at the disposable container. The harnesses read DATABASE_URL directly
+# (toctou-* via `dotenv/config` + @prisma/client; leads-drag via src/lib/prisma.js),
+# so setting it here is what pins them to the throwaway DB. Each harness also cleans
+# up only the EXACT ids it created.
+#
+# This is a CI workflow step (on push / PR), NOT a blocking pre-commit hook.
+# ─────────────────────────────────────────────────────────────────────────────
+name: regression-gate
+
+on:
+  push:
+    paths:
+      # The 3 regression harnesses themselves
+      - 'backend/scripts/toctou-orphan-conversation-distinct-wamid-test.mjs'
+      - 'backend/scripts/toctou-inbound-dedup-test.mjs'
+      - 'backend/scripts/leads-drag-engaged.test.mjs'
+      # Source the harnesses exercise / mirror
+      - 'backend/src/services/conversationEngine.js'
+      - 'backend/src/routes/conversations.js'
+      - 'backend/src/app.js'
+      - 'backend/src/lib/prisma.js'
+      - 'backend/src/middleware/auth.js'
+      - 'frontend/src/pages/Leads.jsx'
+      - 'backend/prisma/schema.prisma'
+      - '.github/workflows/regression-gate.yml'
+  pull_request:
+    paths:
+      - 'backend/scripts/toctou-orphan-conversation-distinct-wamid-test.mjs'
+      - 'backend/scripts/toctou-inbound-dedup-test.mjs'
+      - 'backend/scripts/leads-drag-engaged.test.mjs'
+      - 'backend/src/services/conversationEngine.js'
+      - 'backend/src/routes/conversations.js'
+      - 'backend/src/app.js'
+      - 'backend/src/lib/prisma.js'
+      - 'backend/src/middleware/auth.js'
+      - 'frontend/src/pages/Leads.jsx'
+      - 'backend/prisma/schema.prisma'
+  workflow_dispatch: {}
+
+jobs:
+  regression-gate:
+    runs-on: ubuntu-latest
+
+    # Disposable Postgres — created fresh for this job, destroyed with it. NOT prod.
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB: wa_test
+        ports:
+          - 55433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # Disposable test DB — the harnesses read DATABASE_URL directly, so this pins
+      # them (and `prisma db push`) to the throwaway container, never prod.
+      DATABASE_URL: postgresql://postgres:testpass@127.0.0.1:55433/wa_test
+      # Kept in parallel with payment-gate.yml so any harness that consults
+      # TEST_DATABASE_URL sees the same disposable target.
+      TEST_DATABASE_URL: postgresql://postgres:testpass@127.0.0.1:55433/wa_test
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install backend deps
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Sync Prisma schema to the disposable test DB
+        run: npx prisma db push --skip-generate
+
+      - name: TOCTOU — inbound waMessageId dedup race
+        run: node scripts/toctou-inbound-dedup-test.mjs
+
+      - name: TOCTOU — orphan-conversation distinct-waMessageId cascade data-loss
+        run: node scripts/toctou-orphan-conversation-distinct-wamid-test.mjs
+
+      - name: Leads pipeline — drag-to-engaged persists a distinct marker
+        run: node scripts/leads-drag-engaged.test.mjs
