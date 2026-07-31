@@ -67,7 +67,7 @@ router.get(
 router.put(
   '/:id/status',
   asyncHandler(async (req, res) => {
-    const { status, needsHuman } = req.body || {};
+    const { status, needsHuman, linkSent } = req.body || {};
     const valid = ['active', 'completed', 'abandoned', 'needs_human'];
     if (status && !valid.includes(status)) return res.status(400).json({ error: 'Invalid status' });
     if (!(await ownedConversation(req.params.id, req.tenantId)))
@@ -75,6 +75,11 @@ router.put(
     const data = {};
     if (status) data.status = status;
     if (needsHuman !== undefined) data.needsHuman = needsHuman;
+    // linkSent is the primary "engaged" signal read by the Leads pipeline (frontend
+    // stageOf: linkSent || leadScore>=40 || flow). Dragging a card into "בטיפול"
+    // (engaged) sets it true so the move actually persists — status:'active' alone is a
+    // no-op because a "new" card is already active. Accept an explicit boolean only.
+    if (typeof linkSent === 'boolean') data.linkSent = linkSent;
     const conversation = await prisma.conversation.update({ where: { id: req.params.id }, data });
     if (status === 'completed' || status === 'abandoned') {
       await trackEvent(EVENTS.CONVERSATION_CLOSED, {

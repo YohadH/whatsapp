@@ -104,12 +104,18 @@ function stageAction(id, stage) {
   if (stage === 'won') return api.put(`/api/conversations/${id}/status`, { status: 'completed' });
   if (stage === 'lost') return api.put(`/api/conversations/${id}/status`, { status: 'abandoned' });
   if (stage === 'qualified') return api.post(`/api/conversations/${id}/assign-human`, {});
+  // engaged: reopen as active AND set linkSent:true — the primary signal stageOf reads
+  // to classify a card as "בטיפול". Without it the write is a no-op (a "new" card is
+  // already active), so the card would snap straight back to "new" on reload.
+  if (stage === 'engaged') return api.put(`/api/conversations/${id}/status`, { status: 'active', linkSent: true });
+  // new: reopen as active (unchanged behavior — the pre-existing transition).
   return api.put(`/api/conversations/${id}/status`, { status: 'active' });
 }
 function optimisticPatch(c, stage) {
   if (stage === 'won') return { ...c, status: 'completed', needsHuman: false };
   if (stage === 'lost') return { ...c, status: 'abandoned', needsHuman: false };
   if (stage === 'qualified') return { ...c, status: 'needs_human', needsHuman: true };
+  if (stage === 'engaged') return { ...c, status: 'active', needsHuman: false, linkSent: true };
   return { ...c, status: 'active', needsHuman: false };
 }
 
