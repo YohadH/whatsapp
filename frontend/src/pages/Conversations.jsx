@@ -88,8 +88,8 @@ export default function Conversations() {
       ) : data.items.length === 0 ? (
         <EmptyState>אין שיחות להצגה</EmptyState>
       ) : (
-        <div className="card overflow-hidden p-0">
-          <table className="w-full text-sm">
+        <div className="card overflow-x-auto p-0">
+          <table className="w-full text-sm min-w-[640px]">
             <thead className="bg-gray-50 text-gray-500 text-xs">
               <tr>
                 <th className="text-right px-4 py-3">לקוח</th>

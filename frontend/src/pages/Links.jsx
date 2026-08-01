@@ -51,8 +51,8 @@ export default function Links() {
       ) : links.length === 0 ? (
         <EmptyState>אין קישורים עדיין</EmptyState>
       ) : (
-        <div className="card p-0 overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="card p-0 overflow-x-auto">
+          <table className="w-full text-sm min-w-[640px]">
             <thead className="bg-gray-50 text-gray-500 text-xs">
               <tr>
                 <th className="text-right px-4 py-3">שם</th>
