@@ -11,3 +11,6 @@ test-list.csv
 # Local snapshot / archive artifacts (not source)
 *.zip
 backend/Whatsapp.zip
+
+# Local QA screenshot artifacts (not source)
+qa_screens/
