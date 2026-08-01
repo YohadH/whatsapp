@@ -163,4 +163,62 @@ router.post(
   })
 );
 
+// ── Integrations (owner-toggled connections) ─────────────────────────────────
+// Catalog of connectable services the owner can switch on/off. Enabled-state is
+// persisted per-tenant in Tenant.integrations (JSONB map of { slug: boolean }).
+// Google-group toggles (gmail/calendar/sheets) additionally drive the real gate
+// Tenant.googleIntegrationEnabled, so flipping one on reveals the "Connect Google"
+// flow. Non-Google entries record intent (the owner's chosen connections); the
+// actual data wiring is handled per service.
+const INTEGRATION_CATALOG = [
+  { slug: 'gmail', label: 'Gmail', desc: 'שליחת מיילים אוטומטית מתוך השיחה', group: 'google' },
+  { slug: 'calendar', label: 'Google Calendar', desc: 'תיאום פגישות ויצירת אירועים ביומן', group: 'google' },
+  { slug: 'sheets', label: 'Google Sheets', desc: 'ייצוא לידים ותשובות לגיליון', group: 'google' },
+  { slug: 'webhook', label: 'Webhook / CRM', desc: 'שליחת לידים ל-CRM או לכל מערכת חיצונית', group: null },
+  { slug: 'calendly', label: 'Calendly', desc: 'קביעת פגישות דרך Calendly', group: null },
+  { slug: 'zapier', label: 'Zapier / Make', desc: 'חיבור לאלפי אפליקציות דרך אוטומציה', group: null },
+];
+const CATALOG_SLUGS = new Set(INTEGRATION_CATALOG.map((i) => i.slug));
+
+// Normalize the stored JSON (which may be null, or hold stale slugs) into a clean
+// { slug: boolean } map covering exactly the current catalog.
+function readIntegrations(tenant) {
+  const raw = tenant?.integrations && typeof tenant.integrations === 'object' ? tenant.integrations : {};
+  const out = {};
+  for (const item of INTEGRATION_CATALOG) out[item.slug] = raw[item.slug] === true;
+  return out;
+}
+
+// GET /api/settings/integrations → catalog + this tenant's enabled map.
+router.get(
+  '/integrations',
+  asyncHandler(async (req, res) => {
+    res.json({ catalog: INTEGRATION_CATALOG, enabled: readIntegrations(req.tenant) });
+  })
+);
+
+// PUT /api/settings/integrations → { slug, enabled } toggles one connection.
+router.put(
+  '/integrations',
+  asyncHandler(async (req, res) => {
+    const slug = String(req.body?.slug || '');
+    const enabled = req.body?.enabled === true;
+    if (!CATALOG_SLUGS.has(slug)) return res.status(400).json({ error: 'אינטגרציה לא מוכרת' });
+
+    const current = readIntegrations(req.tenant);
+    const next = { ...current, [slug]: enabled };
+
+    // Any Google-group toggle ON → enable the real Google gate; all OFF → disable.
+    const googleSlugs = INTEGRATION_CATALOG.filter((i) => i.group === 'google').map((i) => i.slug);
+    const anyGoogleOn = googleSlugs.some((s) => next[s]);
+
+    await prisma.tenant.update({
+      where: { id: req.tenantId },
+      data: { integrations: next, googleIntegrationEnabled: anyGoogleOn },
+    });
+
+    res.json({ enabled: next });
+  })
+);
+
 export default router;

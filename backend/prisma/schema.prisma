@@ -97,6 +97,13 @@ model Tenant {
   googleTokensEnc          String? // encrypted OAuth token set (access + refresh)
   googleConnectedEmail     String? // the connected Google account email
 
+  // ── Owner-toggled integrations (Gmail, Calendar, Sheets, Webhook/CRM, …) ──
+  // Map of { [slug]: boolean } persisted as JSONB. The owner flips these in
+  // Settings → אינטגרציות. Enabling any Google-group item also drives
+  // googleIntegrationEnabled (the gate the Google service actually reads).
+  // Nullable/additive (MIGRATION 10_tenant_integrations) — code treats null as {}.
+  integrations Json?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

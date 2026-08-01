@@ -43,6 +43,7 @@ export const TENANT_SELECT = {
   purchasedCredits: true,
   periodStartedAt: true,
   lowCreditNotifiedAt: true,
+  integrations: true, // owner-toggled connections map (read in routes/settings.js)
 };
 
 // Resolve the active tenant for a request and attach `req.tenant` / `req.tenantId`.

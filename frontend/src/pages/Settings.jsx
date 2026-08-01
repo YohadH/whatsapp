@@ -7,6 +7,9 @@ import { launchEmbeddedSignup } from '../lib/fbEmbeddedSignup.js';
 export default function Settings() {
   const { user } = useAuth();
   const [health, setHealth] = useState(null);
+  // Bumped when an integration toggle changes, so the Google panel re-checks its
+  // gate (enabling a Google connection reveals the "Connect Google" flow).
+  const [bump, setBump] = useState(0);
 
   useEffect(() => {
     api.get('/health').then((res) => setHealth(res.data)).catch(() => {});
@@ -40,9 +43,83 @@ export default function Settings() {
       </div>
 
       <WhatsAppConnect />
-      <GoogleConnect />
+      <Integrations onChange={() => setBump((b) => b + 1)} />
+      <GoogleConnect refresh={bump} />
       <Simulator />
     </div>
+  );
+}
+
+// Owner-toggled connections (Gmail, Calendar, Sheets, Webhook/CRM, …). Each toggle
+// persists per-tenant; flipping a Google-group toggle also enables the Google
+// add-on gate, which reveals the "Connect Google" panel below.
+function Integrations({ onChange }) {
+  const [catalog, setCatalog] = useState(null);
+  const [enabled, setEnabled] = useState({});
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    api.get('/api/settings/integrations')
+      .then((r) => { setCatalog(r.data.catalog); setEnabled(r.data.enabled || {}); })
+      .catch(() => setCatalog([]));
+  }, []);
+
+  async function toggle(slug) {
+    const nextVal = !enabled[slug];
+    setEnabled((e) => ({ ...e, [slug]: nextVal })); // optimistic
+    setBusy(slug); setError('');
+    try {
+      const r = await api.put('/api/settings/integrations', { slug, enabled: nextVal });
+      setEnabled(r.data.enabled);
+      onChange?.();
+    } catch (err) {
+      setEnabled((e) => ({ ...e, [slug]: !nextVal })); // revert on failure
+      setError(err.response?.data?.error || 'עדכון החיבור נכשל');
+    } finally {
+      setBusy('');
+    }
+  }
+
+  if (!catalog) return null;
+  const ICONS = { gmail: '📧', calendar: '📅', sheets: '📊', webhook: '🔗', calendly: '🗓️', zapier: '⚡' };
+
+  return (
+    <div className="card mt-4">
+      <h3 className="font-semibold mb-1">🔌 אינטגרציות וחיבורים</h3>
+      <p className="text-sm text-gray-500 mb-4">הפעילו או כבו חיבורים למערכות חיצוניות — אפשר לערוך בכל רגע.</p>
+      {error && <div className="rounded-lg bg-red-50 text-red-600 text-sm p-3 mb-3">{error}</div>}
+      <ul className="divide-y divide-slate-100">
+        {catalog.map((it) => (
+          <li key={it.slug} className="flex items-center justify-between gap-4 py-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="text-xl shrink-0" aria-hidden>{ICONS[it.slug] || '🔌'}</span>
+              <div className="min-w-0">
+                <div className="text-sm font-medium text-slate-800">{it.label}</div>
+                <div className="text-xs text-slate-500 truncate">{it.desc}</div>
+              </div>
+            </div>
+            <Toggle on={!!enabled[it.slug]} busy={busy === it.slug} onClick={() => toggle(it.slug)} label={it.label} />
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// Accessible on/off switch. Green track = on. Knob slides via transform so the
+// motion stays smooth (RTL-safe: color is the primary state cue).
+function Toggle({ on, busy, onClick, label }) {
+  return (
+    <button
+      type="button" role="switch" aria-checked={on} aria-label={label}
+      disabled={busy} onClick={onClick}
+      className={`relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-60 ${on ? 'bg-brand-500' : 'bg-slate-300'}`}
+    >
+      <span
+        className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${on ? 'translate-x-0' : 'translate-x-[1.25rem]'}`}
+      />
+    </button>
   );
 }
 
@@ -51,7 +128,7 @@ export default function Settings() {
 // endpoint returns enabled:false when the add-on isn't purchased, and this returns
 // null in that case → nothing is exposed). Infrastructure only; the owner turns the
 // flag on per tenant when a customer buys the add-on.
-function GoogleConnect() {
+function GoogleConnect({ refresh }) {
   const [status, setStatus] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -61,7 +138,8 @@ function GoogleConnect() {
       .then((r) => setStatus(r.data))
       .catch(() => setStatus({ enabled: false }));
   }
-  useEffect(() => { load(); }, []);
+  // Reload when mounted and whenever an integration toggle changes (refresh bump).
+  useEffect(() => { load(); }, [refresh]);
 
   // Flag OFF (or add-on not enabled) → render nothing at all.
   if (!status || !status.enabled) return null;
