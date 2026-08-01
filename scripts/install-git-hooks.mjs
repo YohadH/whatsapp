@@ -58,6 +58,61 @@ node backend/scripts/check-schema-migration-parity.mjs || exit 1
 node backend/scripts/check-toctou-heuristic.mjs || true
 `;
 
+// pre-push hook body. POLICY: agents commit LOCALLY ONLY — the human reviews and
+// pushes. Nothing else in this repo technically enforced that (there was a
+// pre-commit hook but NO pre-push), which is how commit 2c7d116 reached
+// origin/master without a review gate. This hook makes the standing policy a HARD
+// technical block instead of a prompt-only instruction.
+//
+// Git invokes:  pre-push <remote-name> <remote-url>
+// with one line per pushed ref on stdin:  <localref> <localsha> <remoteref> <remotesha>
+// We block outright (any remote, any ref). A human who genuinely intends to push
+// uses the documented escape hatch:  git push --no-verify
+const PRE_PUSH_HOOK = `#!/bin/sh
+# Auto-installed by scripts/install-git-hooks.mjs.
+# HARD BLOCK: this repo's policy is "agents commit locally only; the human reviews
+# and pushes." Agents must NEVER 'git push'. This hook enforces that policy so a
+# push can't reach origin silently (root cause of the unreviewed 2c7d116 push).
+#
+# HUMAN ESCAPE HATCH: when YOU (a human) have reviewed the commits and intend to
+# push, bypass this hook explicitly:   git push --no-verify
+remote_name="$1"
+echo "" >&2
+echo "✋ pre-push BLOCKED: pushing to '$remote_name' is disabled by repo policy." >&2
+echo "   Agents commit LOCALLY ONLY — the human reviews and pushes." >&2
+echo "   (This is why commit 2c7d116 reaching origin/master without review was a defect.)" >&2
+echo "" >&2
+echo "   If you are a human who has reviewed these commits and want to push:" >&2
+echo "       git push --no-verify" >&2
+echo "" >&2
+exit 1
+`;
+
+// Install one hook idempotently. `foreignMarker` is a substring that identifies
+// OUR managed hook; if an existing hook lacks it, we refuse to clobber a
+// human/foreign hook and print manual instructions instead.
+function installHook(hooksDir, name, body, foreignMarker, manualHint) {
+  const hookPath = path.join(hooksDir, name);
+  const existing = fs.existsSync(hookPath) ? fs.readFileSync(hookPath, 'utf8') : null;
+  if (existing === body) {
+    console.log(`✓ install-git-hooks: ${name} already up to date (${hookPath}).`);
+    return;
+  }
+  if (existing && !existing.includes(foreignMarker)) {
+    console.warn(`⚠ install-git-hooks: a DIFFERENT ${name} hook already exists at`);
+    console.warn(`  ${hookPath}`);
+    console.warn('  Not overwriting. ' + manualHint);
+    return;
+  }
+  fs.writeFileSync(hookPath, body, { mode: 0o755 });
+  try {
+    fs.chmodSync(hookPath, 0o755); // no-op on Windows, needed on *nix/CI
+  } catch {
+    /* chmod may be unsupported — the shebang + git still run it */
+  }
+  console.log(`✓ install-git-hooks: installed ${name} → ${hookPath}`);
+}
+
 function main() {
   const gd = gitDir();
   if (!gd || !fs.existsSync(gd)) {
@@ -67,31 +122,25 @@ function main() {
   }
   const hooksDir = path.join(gd, 'hooks');
   fs.mkdirSync(hooksDir, { recursive: true });
-  const hookPath = path.join(hooksDir, 'pre-commit');
 
-  // Idempotent: only rewrite when content differs, so repeated `npm install`s
-  // (which fire `prepare`) don't thrash the file.
-  const existing = fs.existsSync(hookPath) ? fs.readFileSync(hookPath, 'utf8') : null;
-  if (existing === HOOK) {
-    console.log(`✓ install-git-hooks: pre-commit already up to date (${hookPath}).`);
-    process.exit(0);
-  }
-  if (existing && !existing.includes('check-schema-migration-parity')) {
-    // A different pre-commit hook already exists — do NOT clobber it silently.
-    console.warn('⚠ install-git-hooks: a DIFFERENT pre-commit hook already exists at');
-    console.warn(`  ${hookPath}`);
-    console.warn('  Not overwriting. Add this line to it manually to enable the parity gate:');
-    console.warn('    node backend/scripts/check-schema-migration-parity.mjs || exit 1');
-    process.exit(0);
-  }
+  installHook(
+    hooksDir,
+    'pre-commit',
+    HOOK,
+    'check-schema-migration-parity',
+    'Add this line to it manually to enable the parity gate:\n' +
+      '    node backend/scripts/check-schema-migration-parity.mjs || exit 1',
+  );
 
-  fs.writeFileSync(hookPath, HOOK, { mode: 0o755 });
-  try {
-    fs.chmodSync(hookPath, 0o755); // no-op on Windows, needed on *nix/CI
-  } catch {
-    /* chmod may be unsupported — the shebang + git still run it */
-  }
-  console.log(`✓ install-git-hooks: installed pre-commit schema-parity gate → ${hookPath}`);
+  installHook(
+    hooksDir,
+    'pre-push',
+    PRE_PUSH_HOOK,
+    'pre-push BLOCKED',
+    'To enforce the "commit locally only" policy, make it: exit 1 on push\n' +
+      '  (human bypass: git push --no-verify).',
+  );
+
   process.exit(0);
 }
 
