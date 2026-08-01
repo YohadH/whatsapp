@@ -61,7 +61,7 @@ export default function Tenants() {
 
   function actAs(t) {
     setActiveTenant(t.id);
-    navigate('/');
+    navigate('/dashboard');
   }
 
   if (!tenants) return <Spinner className="h-64" />;

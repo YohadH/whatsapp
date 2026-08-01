@@ -3,6 +3,7 @@ import { useAuth } from './context/AuthContext.jsx';
 import Layout from './components/Layout.jsx';
 import { Spinner } from './components/ui.jsx';
 
+import Landing from './pages/Landing.jsx';
 import Login from './pages/Login.jsx';
 import ResetPassword from './pages/ResetPassword.jsx';
 import Dashboard from './pages/Dashboard.jsx';
@@ -24,7 +25,7 @@ function Protected({ children, tenantScoped = true, superAdminOnly = false }) {
   if (loading) return <Spinner className="h-screen" />;
   if (!user) return <Navigate to="/login" replace />;
   if (user.mustResetPassword) return <Navigate to="/reset-password" replace />;
-  if (superAdminOnly && !isSuperAdmin) return <Navigate to="/" replace />;
+  if (superAdminOnly && !isSuperAdmin) return <Navigate to="/dashboard" replace />;
   if (tenantScoped && isSuperAdmin && !activeTenantId) return <Navigate to="/tenants" replace />;
   return <Layout>{children}</Layout>;
 }
@@ -32,10 +33,12 @@ function Protected({ children, tenantScoped = true, superAdminOnly = false }) {
 export default function App() {
   return (
     <Routes>
+      {/* Public marketing homepage. */}
+      <Route path="/" element={<Landing />} />
       <Route path="/login" element={<Login />} />
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/tenants" element={<Protected tenantScoped={false} superAdminOnly><Tenants /></Protected>} />
-      <Route path="/" element={<Protected><Dashboard /></Protected>} />
+      <Route path="/dashboard" element={<Protected><Dashboard /></Protected>} />
       <Route path="/conversations" element={<Protected><Conversations /></Protected>} />
       <Route path="/conversations/:id" element={<Protected><ConversationDetail /></Protected>} />
       <Route path="/leads" element={<Protected><Leads /></Protected>} />
@@ -48,7 +51,7 @@ export default function App() {
       <Route path="/broadcast" element={<Protected><Broadcast /></Protected>} />
       <Route path="/credits" element={<Protected><Credits /></Protected>} />
       <Route path="/settings" element={<Protected><Settings /></Protected>} />
-      <Route path="*" element={<Navigate to="/" replace />} />
+      <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>
   );
 }

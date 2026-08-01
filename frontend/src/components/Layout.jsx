@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext.jsx';
 import Logo from './Logo.jsx';
 
 const NAV = [
-  { to: '/', label: 'דאשבורד', icon: '📊', end: true },
+  { to: '/dashboard', label: 'דאשבורד', icon: '📊', end: true },
   { to: '/conversations', label: 'שיחות', icon: '💬' },
   { to: '/leads', label: 'צינור לידים', icon: '🧲' },
   { to: '/flows', label: 'תהליכים', icon: '🔀' },

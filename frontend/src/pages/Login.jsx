@@ -16,14 +16,14 @@ export default function Login() {
   // component while rendering a different component" warning. Matches the
   // <Navigate> pattern used in App.jsx's Protected route.
   if (user) {
-    return <Navigate to={user.role === 'super_admin' ? '/tenants' : '/'} replace />;
+    return <Navigate to={user.role === 'super_admin' ? '/tenants' : '/dashboard'} replace />;
   }
 
   // Route by account state: temp password → reset; platform owner → tenants.
   function destinationFor(u) {
     if (u.mustResetPassword) return '/reset-password';
     if (u.role === 'super_admin') return '/tenants';
-    return '/';
+    return '/dashboard';
   }
 
   async function submit(e) {
