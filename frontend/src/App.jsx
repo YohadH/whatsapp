@@ -3,7 +3,6 @@ import { useAuth } from './context/AuthContext.jsx';
 import Layout from './components/Layout.jsx';
 import { Spinner } from './components/ui.jsx';
 
-import Landing from './pages/Landing.jsx';
 import Login from './pages/Login.jsx';
 import ResetPassword from './pages/ResetPassword.jsx';
 import Dashboard from './pages/Dashboard.jsx';
@@ -33,8 +32,7 @@ function Protected({ children, tenantScoped = true, superAdminOnly = false }) {
 export default function App() {
   return (
     <Routes>
-      {/* Public marketing homepage. */}
-      <Route path="/" element={<Landing />} />
+      {/* '/' is the static marketing landing page (served by the server, not React). */}
       <Route path="/login" element={<Login />} />
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/tenants" element={<Protected tenantScoped={false} superAdminOnly><Tenants /></Protected>} />

@@ -1,0 +1,18 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /uploads/
+Disallow: /login
+Disallow: /reset-password
+Disallow: /dashboard
+Disallow: /conversations
+Disallow: /leads
+Disallow: /flows
+Disallow: /content
+Disallow: /broadcast
+Disallow: /analytics
+Disallow: /credits
+Disallow: /settings
+Disallow: /tenants
+
+Sitemap: https://heyil.co.il/sitemap.xml

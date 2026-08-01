@@ -103,17 +103,19 @@ app.use('/api/credits', requireAuth, withTenant, creditsRoutes); // AI credit ba
 app.use('/api/billing', requireAuth, withTenant, billingRoutes); // Stripe subscription checkout (HeyIL plan)
 app.use('/api/integrations', requireAuth, withTenant, integrationsRoutes); // Google add-on (flag-gated, OFF by default)
 
-// ── Serve the built admin frontend (single-service deploy) ───
-// When frontend/dist exists, serve it and fall back to index.html for client-side
-// routing. API/asset paths fall through to the 404 handler instead. Skipped in
-// dev (no dist) where Vite serves the frontend separately on :5173.
+// ── Serve the built frontend (single-service deploy) ───
+// Two HTML entries live in dist: index.html is the public marketing landing page
+// (served by express.static at /), and app.html is the React admin SPA shell.
+// Static assets are served directly; any other non-API route falls back to the
+// SPA shell so client-side routing (/dashboard, /login, …) works on refresh.
+// Skipped in dev (no dist) where Vite serves the frontend separately on :5173.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(__dirname, '../../frontend/dist');
 if (fs.existsSync(clientDist)) {
   app.use(express.static(clientDist));
   app.get('*', (req, res, next) => {
     if (req.path.startsWith('/api') || req.path.startsWith('/uploads')) return next();
-    res.sendFile(path.join(clientDist, 'index.html'));
+    res.sendFile(path.join(clientDist, 'app.html'));
   });
 }
 
