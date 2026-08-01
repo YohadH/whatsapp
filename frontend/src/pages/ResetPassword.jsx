@@ -35,12 +35,14 @@ export default function ResetPassword() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-brand-900 p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-8">
-        <div className="text-center mb-6">
-          <div className="text-4xl mb-2">🔐</div>
-          <h1 className="text-2xl font-bold">בחירת סיסמה חדשה</h1>
-          <p className="text-sm text-gray-500 mt-1">נכנסת עם סיסמה זמנית — יש להחליף אותה כדי להמשיך</p>
+    <div className="min-h-screen flex items-center justify-center bg-heyil-dark p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8">
+        <div className="text-center mb-7">
+          <div className="mx-auto h-14 w-14 rounded-2xl bg-heyil grid place-items-center text-white text-2xl shadow-lg shadow-brand-500/25 mb-3">
+            🔐
+          </div>
+          <h1 className="text-2xl font-extrabold tracking-tight text-slate-900">בחירת סיסמה חדשה</h1>
+          <p className="text-sm text-slate-500 mt-1">נכנסת עם סיסמה זמנית — יש להחליף אותה כדי להמשיך</p>
         </div>
         <form onSubmit={submit} className="space-y-4">
           <div>
