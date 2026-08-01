@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 
 // Shown after first login when the account still has a temporary password
@@ -13,9 +13,11 @@ export default function ResetPassword() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // Not authenticated: redirect declaratively (render-safe) instead of calling
+  // navigate() during render, which triggers React's "Cannot update a component
+  // while rendering a different component" warning. Matches App.jsx's <Navigate>.
   if (!user) {
-    navigate('/login');
-    return null;
+    return <Navigate to="/login" replace />;
   }
 
   async function submit(e) {
