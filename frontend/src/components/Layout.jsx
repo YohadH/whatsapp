@@ -22,7 +22,7 @@ export default function Layout({ children }) {
     `flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition ${
       isActive
         ? 'bg-gradient-to-l from-brand-500/25 to-accent-500/25 text-white font-semibold ring-1 ring-white/10'
-        : 'text-white/60 hover:bg-white/8 hover:text-white'
+        : 'text-white/60 hover:bg-white/10 hover:text-white'
     }`;
 
   return (
@@ -63,7 +63,7 @@ export default function Layout({ children }) {
               <div className="text-[11px] text-white/40 truncate">{user?.email}</div>
             </div>
           </div>
-          <button onClick={() => { logout(); navigate('/login'); }} className="w-full text-right text-sm text-white/60 hover:text-white px-2 py-1.5 rounded-lg hover:bg-white/8 transition">
+          <button onClick={() => { logout(); navigate('/login'); }} className="w-full text-right text-sm text-white/60 hover:text-white px-2 py-1.5 rounded-lg hover:bg-white/10 transition">
             התנתקות ←
           </button>
         </div>
