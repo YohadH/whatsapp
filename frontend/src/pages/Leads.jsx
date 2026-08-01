@@ -73,36 +73,54 @@ function scoreTone(score) {
 
 // A draggable lead card. The card BODY is the drag handle; the "open" link at the
 // bottom is the click target (so dragging never accidentally navigates).
-function LeadCard({ c, onDragStart, onDragEnd, dragging }) {
+// A lead card. On desktop the body is a drag handle (mouse DnD); on every device the
+// "העבר" dropdown moves it between stages (touch-friendly — drag doesn't work on mobile).
+// The "פתח שיחה" link is the click target and never triggers a drag.
+function LeadCard({ c, onDragStart, onDragEnd, dragging, onMove }) {
+  const cur = stageOf(c);
   return (
     <div
       draggable
       onDragStart={(e) => onDragStart(e, c)}
       onDragEnd={onDragEnd}
-      className={`rounded-xl border border-gray-200 bg-white p-3 shadow-sm transition cursor-grab active:cursor-grabbing
-        ${dragging ? 'opacity-40 ring-2 ring-brand-300' : 'hover:shadow-md hover:border-brand-300'}`}
+      className={`rounded-xl border bg-white p-3 shadow-sm transition lg:cursor-grab lg:active:cursor-grabbing
+        ${dragging ? 'opacity-40 ring-2 ring-brand-300' : 'border-slate-200 hover:shadow-md hover:border-brand-300'}`}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="font-medium text-gray-900 truncate">{c.customer?.name || 'ללא שם'}</div>
-          <div className="text-xs text-gray-400 truncate" dir="ltr">{c.whatsappPhone}</div>
+          <div className="font-semibold text-slate-900 truncate">{c.customer?.name || 'ללא שם'}</div>
+          <div className="text-xs text-slate-400 truncate" dir="ltr">{c.whatsappPhone}</div>
         </div>
         <span className={`badge shrink-0 ${scoreTone(c.leadScore)}`} title="ניקוד ליד">{c.leadScore ?? 0}</span>
       </div>
-      {c.lastMessage && <div className="mt-2 text-xs text-gray-600 line-clamp-2">{c.lastMessage}</div>}
-      <div className="mt-2 flex flex-wrap items-center gap-1 text-[11px] text-gray-400">
-        {c.intent && <span className="badge bg-gray-100 text-gray-500">{INTENT_LABELS[c.intent] || c.intent}</span>}
-        {c.flow?.name && <span className="badge bg-gray-100 text-gray-500">{c.flow.name}</span>}
+      {c.lastMessage && <div className="mt-2 text-xs text-slate-600 line-clamp-2">{c.lastMessage}</div>}
+      <div className="mt-2 flex flex-wrap items-center gap-1 text-[11px] text-slate-400">
+        {c.intent && <span className="badge bg-slate-100 text-slate-500">{INTENT_LABELS[c.intent] || c.intent}</span>}
+        {c.flow?.name && <span className="badge bg-slate-100 text-slate-500">{c.flow.name}</span>}
         <span className="mr-auto">{c.lastActivityAt ? new Date(c.lastActivityAt).toLocaleDateString('he-IL') : ''}</span>
       </div>
-      <Link
-        to={`/conversations/${c.id}`}
-        draggable={false}
-        onClick={(e) => e.stopPropagation()}
-        className="mt-2.5 block text-center text-xs font-medium text-brand-700 border border-brand-100 rounded-lg py-1.5 hover:bg-brand-50 transition"
-      >
-        פתח שיחה ←
-      </Link>
+      <div className="mt-2.5 flex items-center gap-2">
+        <Link
+          to={`/conversations/${c.id}`}
+          draggable={false}
+          onClick={(e) => e.stopPropagation()}
+          className="flex-1 text-center text-xs font-medium text-brand-700 border border-brand-100 rounded-lg py-1.5 hover:bg-brand-50 transition"
+        >
+          פתח שיחה ←
+        </Link>
+        <select
+          value=""
+          onChange={(e) => { if (e.target.value) onMove(e.target.value); e.target.value = ''; }}
+          onClick={(e) => e.stopPropagation()}
+          className="shrink-0 text-xs rounded-lg border border-slate-200 bg-white text-slate-600 py-1.5 pr-2 pl-1 outline-none focus:border-brand-400 cursor-pointer"
+          title="העברה לשלב אחר"
+        >
+          <option value="">↔ העבר</option>
+          {STAGES.filter((s) => s.key !== cur).map((s) => (
+            <option key={s.key} value={s.key}>{s.label}</option>
+          ))}
+        </select>
+      </div>
     </div>
   );
 }
@@ -178,15 +196,13 @@ export default function Leads() {
     setDragId(null);
     setOverStage(null);
   }
-  async function onDrop(e, stageKey) {
-    e.preventDefault();
-    setOverStage(null);
-    const id = e.dataTransfer.getData('text/plain') || dragId;
-    setDragId(null);
+  // Shared move logic — used by both drag-drop (desktop) and the card's stage dropdown
+  // (works on touch). Optimistic, with revert-on-error.
+  async function moveTo(id, stageKey) {
     const c = items.find((x) => x.id === id);
     if (!c || stageOf(c) === stageKey) return;
     setMoveErr('');
-    setItems((prev) => prev.map((x) => (x.id === id ? optimisticPatch(x, stageKey) : x))); // optimistic
+    setItems((prev) => prev.map((x) => (x.id === id ? optimisticPatch(x, stageKey) : x)));
     try {
       await stageAction(id, stageKey);
     } catch (err) {
@@ -194,12 +210,19 @@ export default function Leads() {
       load(); // revert to server truth
     }
   }
+  function onDrop(e, stageKey) {
+    e.preventDefault();
+    setOverStage(null);
+    const id = e.dataTransfer.getData('text/plain') || dragId;
+    setDragId(null);
+    moveTo(id, stageKey);
+  }
 
   return (
     <div>
       <PageHeader
         title="צינור לידים"
-        subtitle={`${items.length} לידים לפי שלב בתהליך · גררו כרטיס בין העמודות כדי לעדכן את השלב`}
+        subtitle={`${items.length} לידים לפי שלב · גררו כרטיס (במחשב) או השתמשו ב"העבר" כדי לשנות שלב`}
         actions={<Link to="/conversations" className="btn-ghost">תצוגת רשימה ←</Link>}
       />
 
@@ -212,34 +235,43 @@ export default function Leads() {
       ) : items.length === 0 ? (
         <EmptyState>אין לידים להצגה</EmptyState>
       ) : (
-        <div className="flex gap-4 overflow-x-auto pb-4">
+        // Mobile: columns stack vertically. Desktop: 5 equal columns fill the width (no
+        // horizontal scroll) and the board fills the viewport height.
+        <div className="flex flex-col lg:grid lg:grid-cols-5 gap-3 pb-2">
           {STAGES.map((stage) => {
             const cards = grouped[stage.key];
             const isOver = overStage === stage.key;
             return (
-              <div key={stage.key} className="w-72 shrink-0">
-                <div className={`rounded-t-xl border-x border-t px-3 py-2.5 ${stage.soft}`}>
+              <div key={stage.key} className="w-full flex flex-col min-w-0">
+                <div className={`rounded-t-2xl border-x border-t px-3.5 py-3 ${stage.soft}`}>
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className={`h-2.5 w-2.5 rounded-full ${stage.color}`} />
-                      <span className={`font-semibold text-sm ${stage.text}`}>{stage.label}</span>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${stage.color}`} />
+                      <span className={`font-bold text-sm truncate ${stage.text}`}>{stage.label}</span>
                     </div>
-                    <span className="badge bg-white/70 text-gray-600">{cards.length}</span>
+                    <span className={`badge bg-white/80 ${stage.text} font-semibold shrink-0`}>{cards.length}</span>
                   </div>
-                  <div className="text-[11px] text-gray-400 mt-0.5">{stage.hint}</div>
+                  <div className="text-[11px] text-slate-400 mt-0.5 truncate">{stage.hint}</div>
                 </div>
                 <div
                   onDragOver={(e) => { e.preventDefault(); if (overStage !== stage.key) setOverStage(stage.key); }}
                   onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setOverStage((s) => (s === stage.key ? null : s)); }}
                   onDrop={(e) => onDrop(e, stage.key)}
-                  className={`rounded-b-xl border p-2 space-y-2 min-h-[8rem] transition-colors
-                    ${isOver ? 'border-brand-400 border-dashed bg-brand-50/70' : 'border-gray-200 bg-gray-50/60'}`}
+                  className={`rounded-b-2xl border p-2 space-y-2 transition-colors lg:flex-1 lg:min-h-[62vh] lg:overflow-y-auto
+                    ${isOver ? 'border-brand-400 border-dashed bg-brand-50/70' : 'border-slate-200 bg-slate-50/70'}`}
                 >
                   {cards.length === 0 ? (
-                    <div className="text-center text-xs text-gray-300 py-6">{isOver ? 'שחררו כאן' : 'אין לידים בשלב זה'}</div>
+                    <div className="text-center text-xs text-slate-300 py-5">{isOver ? 'שחררו כאן' : 'אין לידים בשלב זה'}</div>
                   ) : (
                     cards.map((c) => (
-                      <LeadCard key={c.id} c={c} onDragStart={onDragStart} onDragEnd={onDragEnd} dragging={dragId === c.id} />
+                      <LeadCard
+                        key={c.id}
+                        c={c}
+                        onDragStart={onDragStart}
+                        onDragEnd={onDragEnd}
+                        dragging={dragId === c.id}
+                        onMove={(stageKey) => moveTo(c.id, stageKey)}
+                      />
                     ))
                   )}
                 </div>

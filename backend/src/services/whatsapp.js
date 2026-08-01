@@ -166,12 +166,63 @@ export async function listMessageTemplates(creds) {
     const comps = t.components || [];
     const body = comps.find((cc) => cc.type === 'BODY');
     const header = comps.find((cc) => cc.type === 'HEADER');
+    const footer = comps.find((cc) => cc.type === 'FOOTER');
     const bodyText = body?.text || '';
     const variableCount = (bodyText.match(/\{\{\s*\d+\s*\}\}/g) || []).length;
     const hasImageHeader = header?.format === 'IMAGE';
-    return { name: t.name, language: t.language, status: t.status, category: t.category, bodyText, variableCount, hasImageHeader };
+    // `id` + `footerText` let the UI edit/delete a template (targets it by id/name).
+    return { id: t.id, name: t.name, language: t.language, status: t.status, category: t.category, bodyText, footerText: footer?.text || '', variableCount, hasImageHeader };
   });
   return { configured: true, templates };
+}
+
+// Delete a template from the WABA by name (removes ALL language versions with that
+// name). Permanent on Meta's side. Throws with Meta's error message on failure.
+export async function deleteMessageTemplate(creds, name) {
+  const c = normalizeCreds(creds);
+  if (!c.token || !c.businessAccountId) {
+    throw Object.assign(new Error('WhatsApp account not configured for this tenant'), { status: 400 });
+  }
+  const res = await fetch(
+    `https://graph.facebook.com/${c.apiVersion}/${c.businessAccountId}/message_templates?name=${encodeURIComponent(name)}`,
+    { method: 'DELETE', headers: { Authorization: `Bearer ${c.token}` } }
+  );
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json.error) {
+    throw Object.assign(new Error(json.error?.message || `HTTP ${res.status}`), { status: res.status });
+  }
+  return json;
+}
+
+// Edit an existing template by its id. Meta re-reviews the change (status → PENDING),
+// and only APPROVED/REJECTED/PAUSED templates can be edited (not one already PENDING).
+export async function editMessageTemplate(creds, { id, category, bodyText, footerText, examples = [] }) {
+  const c = normalizeCreds(creds);
+  if (!c.token) throw Object.assign(new Error('WhatsApp account not configured for this tenant'), { status: 400 });
+  if (!id) throw Object.assign(new Error('template id is required'), { status: 400 });
+
+  const body = { type: 'BODY', text: bodyText };
+  const varCount = (bodyText.match(/\{\{\s*\d+\s*\}\}/g) || []).length;
+  if (varCount > 0) {
+    const ex = [...examples];
+    while (ex.length < varCount) ex.push(`דוגמה ${ex.length + 1}`);
+    body.example = { body_text: [ex.slice(0, varCount)] };
+  }
+  const components = [body];
+  if (footerText && footerText.trim()) components.push({ type: 'FOOTER', text: footerText.trim() });
+
+  const payload = { components };
+  if (category) payload.category = category;
+  const res = await fetch(`https://graph.facebook.com/${c.apiVersion}/${id}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${c.token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json.error) {
+    throw Object.assign(new Error(json.error?.message || `HTTP ${res.status}`), { status: res.status });
+  }
+  return json;
 }
 
 /**

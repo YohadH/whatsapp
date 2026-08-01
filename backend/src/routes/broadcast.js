@@ -3,7 +3,13 @@ import multer from 'multer';
 import * as XLSX from 'xlsx';
 import { asyncHandler } from '../middleware/error.js';
 import { sheetToRows } from '../lib/sheet.js';
-import { listMessageTemplates, createMessageTemplate, checkToken } from '../services/whatsapp.js';
+import {
+  listMessageTemplates,
+  createMessageTemplate,
+  editMessageTemplate,
+  deleteMessageTemplate,
+  checkToken,
+} from '../services/whatsapp.js';
 import { tenantWhatsAppCreds } from '../lib/tenantContext.js';
 import { normalizePhone } from '../lib/phone.js';
 import prisma from '../lib/prisma.js';
@@ -72,6 +78,45 @@ router.post(
         examples,
       });
       res.status(201).json(result); // { id, status: 'PENDING', category }
+    } catch (err) {
+      res.status(err.status || 502).json({ error: err.message });
+    }
+  })
+);
+
+// PUT /api/broadcast/templates/:id → edit a template (re-submits to Meta for review).
+router.put(
+  '/templates/:id',
+  asyncHandler(async (req, res) => {
+    const b = req.body || {};
+    if (!b.bodyText || !String(b.bodyText).trim()) return res.status(400).json({ error: 'תוכן ההודעה נדרש' });
+    const category = TEMPLATE_CATEGORIES.includes(b.category) ? b.category : undefined;
+    const examples = Array.isArray(b.examples)
+      ? b.examples
+      : String(b.examples || '').split(',').map((s) => s.trim()).filter(Boolean);
+    try {
+      const result = await editMessageTemplate(tenantWhatsAppCreds(req.tenant), {
+        id: req.params.id,
+        category,
+        bodyText: String(b.bodyText),
+        footerText: b.footerText,
+        examples,
+      });
+      res.json(result);
+    } catch (err) {
+      res.status(err.status || 502).json({ error: err.message });
+    }
+  })
+);
+
+// DELETE /api/broadcast/templates?name=... → delete a template from the WABA (permanent).
+router.delete(
+  '/templates',
+  asyncHandler(async (req, res) => {
+    const name = req.query.name || req.body?.name;
+    if (!name) return res.status(400).json({ error: 'name is required' });
+    try {
+      res.json(await deleteMessageTemplate(tenantWhatsAppCreds(req.tenant), String(name)));
     } catch (err) {
       res.status(err.status || 502).json({ error: err.message });
     }

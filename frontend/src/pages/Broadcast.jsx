@@ -20,6 +20,9 @@ export default function Broadcast() {
   const [creating, setCreating] = useState(false);
   const [createErr, setCreateErr] = useState('');
   const [newTpl, setNewTpl] = useState({ name: '', category: 'UTILITY', language: 'he', bodyText: '', footerText: '', examples: '' });
+  const [tplRefreshing, setTplRefreshing] = useState(false);
+  const [editingId, setEditingId] = useState(null); // template id being edited (null = create mode)
+  const [deletingName, setDeletingName] = useState('');
 
   const [mode, setMode] = useState('template'); // 'template' | 'text'
   const [templateName, setTemplateName] = useState('');
@@ -60,20 +63,75 @@ export default function Broadcast() {
       .finally(() => setLoadingTpl(false));
   }
 
-  async function createTemplate(e) {
+  async function refreshTemplates() {
+    setTplRefreshing(true);
+    await loadTemplates();
+    setTplRefreshing(false);
+  }
+
+  function resetTemplateForm() {
+    setNewTpl({ name: '', category: 'UTILITY', language: 'he', bodyText: '', footerText: '', examples: '' });
+    setEditingId(null);
+    setCreateErr('');
+  }
+
+  function openCreate() {
+    resetTemplateForm();
+    setShowCreate(true);
+  }
+
+  // Open the modal pre-filled to EDIT an existing template.
+  function openEdit(t) {
+    setNewTpl({ name: t.name, category: t.category || 'UTILITY', language: t.language || 'he', bodyText: t.bodyText || '', footerText: t.footerText || '', examples: '' });
+    setEditingId(t.id);
+    setCreateErr('');
+    setShowCreate(true);
+  }
+
+  // Create OR edit, depending on editingId. Editing re-submits to Meta for approval.
+  async function submitTemplate(e) {
     e.preventDefault();
+    if (editingId && !window.confirm('עריכת תבנית שולחת אותה מחדש לאישור Meta — הסטטוס יחזור ל"ממתינה לאישור" עד שתאושר מחדש. להמשיך?')) return;
     setCreateErr('');
     setCreating(true);
     try {
-      const r = await api.post('/api/broadcast/templates', newTpl);
+      if (editingId) {
+        await api.put(`/api/broadcast/templates/${editingId}`, newTpl);
+      } else {
+        await api.post('/api/broadcast/templates', newTpl);
+      }
       setShowCreate(false);
-      setNewTpl({ name: '', category: 'UTILITY', language: 'he', bodyText: '', footerText: '', examples: '' });
+      resetTemplateForm();
       await loadTemplates();
-      alert(`התבנית נשלחה ל-Meta לאישור (סטטוס: ${r.data.status || 'PENDING'}). היא תופיע כזמינה לשליחה לאחר האישור.`);
+      alert(editingId
+        ? 'התבנית עודכנה ונשלחה מחדש לאישור Meta. תופיע כמאושרת לאחר האישור.'
+        : 'התבנית נשלחה ל-Meta לאישור. תופיע כזמינה לשליחה לאחר האישור.');
     } catch (err) {
-      setCreateErr(err.response?.data?.error || 'יצירת התבנית נכשלה');
+      const m = err.response?.data?.error || '';
+      setCreateErr(
+        editingId && /#100|permission/i.test(m)
+          ? 'עריכת תבנית דורשת הרשאת ניהול מלאה ב-Meta (נפתחת לאחר אימות עסק / Tech Provider). בינתיים ניתן לערוך אותה ב-WhatsApp Manager.'
+          : m || (editingId ? 'עריכת התבנית נכשלה' : 'יצירת התבנית נכשלה')
+      );
     } finally {
       setCreating(false);
+    }
+  }
+
+  // Delete a template from Meta (permanent). Guarded by an explicit confirm.
+  async function deleteTemplate(t) {
+    if (!window.confirm(`למחוק את התבנית "${t.name}"?\n\n⚠️ הפעולה מוחקת אותה לצמיתות גם מ-Meta ולא ניתן יהיה לשלוח אותה יותר.`)) return;
+    setDeletingName(t.name);
+    try {
+      await api.delete('/api/broadcast/templates', { params: { name: t.name } });
+      await loadTemplates();
+    } catch (err) {
+      const m = err.response?.data?.error || '';
+      alert(/#100|permission/i.test(m)
+        ? 'מחיקת תבנית דורשת הרשאת ניהול מלאה ב-Meta (נפתחת לאחר אימות עסק / Tech Provider). בינתיים ניתן למחוק את התבנית ישירות ב-WhatsApp Manager, והיא תיעלם מכאן לאחר "רענון סטטוס".'
+        : (m || 'מחיקת התבנית נכשלה.'));
+    } finally {
+      setDeletingName('');
     }
   }
 
@@ -111,7 +169,7 @@ export default function Broadcast() {
   const selectedTpl = templates.find((t) => t.name === templateName);
   const varCount = mode === 'template' ? selectedTpl?.variableCount ?? 0 : message ? 1 : 0;
   // Whether an image header is needed: known from the template, or flagged manually.
-  const imageRequired = mode === 'template' && (selectedTpl ? !!selectedTpl.hasImageHeader : manualHasImage);
+  const imageRequired = mode === 'template' && !!selectedTpl?.hasImageHeader;
 
   function onPickTemplate(name) {
     setTemplateName(name);
@@ -233,32 +291,72 @@ export default function Broadcast() {
       <PageHeader
         title="שליחה מרובה"
         subtitle="העלאת רשימת מספרים ושליחת הודעה לכולם"
-        actions={<button className="btn-primary" onClick={() => setShowCreate(true)}>+ תבנית חדשה</button>}
+        actions={<button type="button" className="btn-primary" onClick={openCreate}>+ תבנית חדשה</button>}
       />
 
-      {/* Template approval status */}
-      {allTemplates.length > 0 && (
-        <div className="card mb-4">
-          <h3 className="font-semibold text-sm mb-2">התבניות שלי</h3>
-          <div className="flex flex-wrap gap-2">
-            {allTemplates.map((t) => (
-              <span key={`${t.name}:${t.language}`} className={`badge ${STATUS_BADGE[t.status] || 'bg-gray-100 text-gray-600'}`}>
-                {t.name} · {STATUS_HE[t.status] || t.status}
-              </span>
-            ))}
+      {/* Template gallery — every template with its content + Meta approval status */}
+      <div className="card mb-4">
+        <div className="flex items-center justify-between mb-3 gap-2">
+          <div>
+            <h3 className="font-semibold">התבניות שלי</h3>
+            <p className="text-xs text-slate-400 mt-0.5">הסטטוס מגיע ישירות מ-Meta — רק תבנית <b>מאושרת</b> ניתנת לשליחה.</p>
+          </div>
+          <div className="flex gap-2 shrink-0">
+            <button type="button" className="btn-ghost text-xs" disabled={tplRefreshing} onClick={refreshTemplates}>
+              {tplRefreshing ? 'מרענן…' : '↻ רענון סטטוס'}
+            </button>
+            <button type="button" className="btn-primary text-xs" onClick={openCreate}>+ תבנית חדשה</button>
           </div>
         </div>
-      )}
+        {loadingTpl ? (
+          <Spinner />
+        ) : allTemplates.length === 0 ? (
+          <div className="text-center text-sm text-slate-400 py-6">
+            עדיין אין תבניות. צרו את הראשונה עם <b>"תבנית חדשה"</b> — היא תישלח ל-Meta לאישור.
+          </div>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {allTemplates.map((t) => (
+              <div key={`${t.name}:${t.language}`} className="rounded-xl border border-slate-100 bg-slate-50/60 p-3 flex flex-col">
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <span className="font-mono text-sm text-slate-800 truncate" dir="ltr" title={t.name}>{t.name}</span>
+                  <span className={`badge shrink-0 ${STATUS_BADGE[t.status] || 'bg-gray-100 text-gray-600'}`}>
+                    {STATUS_HE[t.status] || t.status}
+                  </span>
+                </div>
+                {t.bodyText && <p className="text-xs text-slate-600 whitespace-pre-wrap line-clamp-3 mb-2 flex-1">{t.bodyText}</p>}
+                <div className="flex flex-wrap gap-1 text-[11px] mb-2.5">
+                  <span className="badge bg-white border border-slate-200 text-slate-500">{t.language}</span>
+                  {t.category && <span className="badge bg-white border border-slate-200 text-slate-500">{t.category}</span>}
+                  {t.variableCount > 0 && <span className="badge bg-white border border-slate-200 text-slate-500">{t.variableCount} משתנים</span>}
+                  {t.hasImageHeader && <span className="badge bg-white border border-slate-200 text-slate-500">🖼️ תמונה</span>}
+                </div>
+                <div className="flex gap-2 mt-auto pt-1 border-t border-slate-100">
+                  <button type="button" className="flex-1 text-xs font-medium text-accent-700 hover:bg-accent-50 rounded-lg py-1.5 transition" onClick={() => openEdit(t)}>
+                    עריכה
+                  </button>
+                  <button type="button" className="flex-1 text-xs font-medium text-red-600 hover:bg-red-50 rounded-lg py-1.5 transition disabled:opacity-50" disabled={deletingName === t.name} onClick={() => deleteTemplate(t)}>
+                    {deletingName === t.name ? 'מוחק…' : 'מחיקה'}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {showCreate && (
-        <Modal open title="יצירת תבנית חדשה" onClose={() => setShowCreate(false)}>
-          <form onSubmit={createTemplate} className="space-y-3">
-            <p className="text-xs text-gray-500">
-              התבנית נשלחת ל-Meta לאישור (בדרך כלל דקות עד 24 שעות). ניתן לשלוח אותה רק לאחר שאושרה.
+        <Modal open title={editingId ? 'עריכת תבנית' : 'יצירת תבנית חדשה'} onClose={() => { setShowCreate(false); resetTemplateForm(); }}>
+          <form onSubmit={submitTemplate} className="space-y-3">
+            <p className={`text-xs rounded-lg p-2.5 ${editingId ? 'bg-amber-50 text-amber-700' : 'text-slate-500'}`}>
+              {editingId
+                ? '⚠️ עריכת התבנית תשלח אותה מחדש לאישור Meta — הסטטוס יחזור ל"ממתינה לאישור" עד שתאושר מחדש. (לא ניתן לערוך תבנית שכבר ממתינה לאישור.)'
+                : 'התבנית נשלחת ל-Meta לאישור (בדרך כלל דקות עד 24 שעות). ניתן לשלוח אותה רק לאחר שאושרה.'}
             </p>
             <div>
               <label className="label">שם התבנית (אנגלית, מספרים וקו תחתון)</label>
-              <input className="input" value={newTpl.name} onChange={(e) => setNewTpl((t) => ({ ...t, name: e.target.value }))} placeholder="appointment_reminder" required />
+              <input className="input disabled:bg-slate-100 disabled:text-slate-400" value={newTpl.name} disabled={!!editingId} onChange={(e) => setNewTpl((t) => ({ ...t, name: e.target.value }))} placeholder="appointment_reminder" required />
+              {editingId && <p className="text-xs text-slate-400 mt-1">לא ניתן לשנות שם של תבנית קיימת.</p>}
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -292,8 +390,8 @@ export default function Broadcast() {
             </div>
             {createErr && <div className="text-sm text-red-600 bg-red-50 rounded p-2">{createErr}</div>}
             <div className="flex justify-end gap-2">
-              <button type="button" className="btn-ghost" onClick={() => setShowCreate(false)}>ביטול</button>
-              <button className="btn-primary" disabled={creating}>{creating ? 'שולח…' : 'שליחה לאישור'}</button>
+              <button type="button" className="btn-ghost" onClick={() => { setShowCreate(false); resetTemplateForm(); }}>ביטול</button>
+              <button className="btn-primary" disabled={creating}>{creating ? 'שולח…' : editingId ? 'עדכון ושליחה לאישור' : 'שליחה לאישור'}</button>
             </div>
           </form>
         </Modal>
@@ -329,31 +427,24 @@ export default function Broadcast() {
             <>
               {loadingTpl ? (
                 <Spinner />
-              ) : configured && templates.length ? (
+              ) : (
                 <div>
-                  <label className="label">בחר תבנית</label>
-                  <select className="input" value={templateName} onChange={(e) => onPickTemplate(e.target.value)}>
-                    <option value="">— בחר/י —</option>
+                  <label className="label">בחר תבנית מאושרת</label>
+                  {/* Only approved templates are selectable — no free-text template names. */}
+                  <select className="input" value={templateName} onChange={(e) => onPickTemplate(e.target.value)} disabled={!templates.length}>
+                    <option value="">{templates.length ? '— בחר/י —' : 'אין תבניות מאושרות'}</option>
                     {templates.map((t) => (
                       <option key={`${t.name}:${t.language}`} value={t.name}>
                         {t.name} ({t.language}) · {t.variableCount} משתנים{t.hasImageHeader ? ' · 🖼️' : ''}
                       </option>
                     ))}
                   </select>
-                  {selectedTpl && <p className="text-xs text-gray-500 mt-2 whitespace-pre-wrap bg-gray-50 rounded p-2">{selectedTpl.bodyText}</p>}
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <p className="text-xs text-gray-500">
-                    {configured ? 'לא נמצאו תבניות מאושרות.' : 'לא הוגדר WHATSAPP_BUSINESS_ACCOUNT_ID — אפשר להזין שם תבנית ידנית.'}
-                  </p>
-                  <input className="input" placeholder="שם התבנית (למשל israel_promo)" value={templateName} onChange={(e) => setTemplateName(e.target.value)} />
-                  <input className="input" placeholder="קוד שפה (he)" value={languageCode} onChange={(e) => setLanguageCode(e.target.value)} />
-                  <input className="input" type="number" min="0" placeholder="מספר משתנים בתבנית" value={varColumns.length} onChange={(e) => setVarColumns(Array(Math.max(0, +e.target.value || 0)).fill(''))} />
-                  <label className="flex items-center gap-2 text-sm">
-                    <input type="checkbox" checked={manualHasImage} onChange={(e) => setManualHasImage(e.target.checked)} />
-                    לתבנית יש תמונת Header
-                  </label>
+                  {templates.length === 0 && (
+                    <div className="mt-2 text-xs text-slate-500 bg-slate-50 rounded-lg p-3">
+                      אין תבניות מאושרות לשליחה. צרו תבנית ב<b>"התבניות שלי"</b> למעלה, המתינו לאישור Meta (הסטטוס יתעדכן ל<b>מאושרת</b>) — ואז היא תופיע כאן לבחירה.
+                    </div>
+                  )}
+                  {selectedTpl && <p className="text-xs text-slate-500 mt-2 whitespace-pre-wrap bg-slate-50 rounded-lg p-3">{selectedTpl.bodyText}</p>}
                 </div>
               )}
 
