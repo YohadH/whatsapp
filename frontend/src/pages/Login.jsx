@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
+import Logo from '../components/Logo.jsx';
 
 export default function Login() {
   const { login, user } = useAuth();
@@ -10,7 +11,13 @@ export default function Login() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  if (user) navigate(user.role === 'super_admin' ? '/tenants' : '/');
+  // Already authenticated: redirect declaratively (render-safe) instead of
+  // calling navigate() during render, which triggers React's "Cannot update a
+  // component while rendering a different component" warning. Matches the
+  // <Navigate> pattern used in App.jsx's Protected route.
+  if (user) {
+    return <Navigate to={user.role === 'super_admin' ? '/tenants' : '/'} replace />;
+  }
 
   // Route by account state: temp password → reset; platform owner → tenants.
   function destinationFor(u) {
@@ -37,9 +44,7 @@ export default function Login() {
     <div className="min-h-screen flex items-center justify-center bg-heyil-dark p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8">
         <div className="text-center mb-7">
-          <div className="mx-auto h-14 w-14 rounded-2xl bg-heyil grid place-items-center text-white font-black text-2xl shadow-lg shadow-brand-500/25 mb-3">
-            H
-          </div>
+          <Logo className="mx-auto h-16 w-16 drop-shadow-lg mb-3" gid="login" />
           <h1 className="text-3xl font-extrabold tracking-tight text-heyil">HeyIL</h1>
           <p className="text-sm text-slate-500 mt-1">כניסת מנהל/ת</p>
         </div>

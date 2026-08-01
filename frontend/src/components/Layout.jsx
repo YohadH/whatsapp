@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
+import Logo from './Logo.jsx';
 
 const NAV = [
   { to: '/', label: 'דאשבורד', icon: '📊', end: true },
@@ -44,9 +45,7 @@ export default function Layout({ children }) {
       >
         <div className="px-5 py-5 border-b border-white/10">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-2xl bg-heyil grid place-items-center text-white font-black text-lg shadow-lg shadow-brand-500/20">
-              H
-            </div>
+            <Logo className="h-10 w-10 drop-shadow-lg" gid="sidebar" />
             <div>
               <div className="text-2xl font-extrabold leading-none tracking-tight text-heyil">HeyIL</div>
               <div className="text-[11px] text-white/40 mt-1">{isSuperAdmin ? 'קונסולת פלטפורמה' : 'סוכן WhatsApp חכם'}</div>
@@ -87,7 +86,7 @@ export default function Layout({ children }) {
         {/* Mobile top bar — HeyIL logo + hamburger (hidden on desktop). */}
         <div className="lg:hidden sticky top-0 z-20 flex items-center justify-between bg-heyil-dark text-white px-4 py-3 shadow-md">
           <div className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded-xl bg-heyil grid place-items-center text-white font-black shadow">H</div>
+            <Logo className="h-8 w-8" gid="mobile" />
             <span className="text-lg font-extrabold tracking-tight text-heyil">HeyIL</span>
           </div>
           <button onClick={() => setDrawerOpen(true)} className="p-2 -mr-2 rounded-lg hover:bg-white/10 transition" aria-label="תפריט">
