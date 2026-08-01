@@ -101,7 +101,7 @@
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@500;600;700;800&family=Assistant:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@500;600;700;800&family=Assistant:wght@400;500;600;700&family=Noto+Sans+Hebrew:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
   :root{
     /* ===== HeyIL BRAND SYSTEM (§S, 26/07) — dark-neon, supersedes the V2.x paper/gold palette ===== */
@@ -448,6 +448,91 @@
     .js [data-reveal]{opacity:1;transform:none}
     .hero .rise{opacity:1;transform:none}
   }
+
+  /* ===================================================================
+     LIGHT · TEAL · ROUNDED reskin (active theme).
+     Redeclares the design tokens (last :root wins, so every token-based
+     component re-resolves to the light palette) then patches the rules
+     that hardcode dark colors or sharp corners. Soft, clean SaaS feel:
+     off-white base, mint→teal accent, generous radii, soft shadows.
+     =================================================================== */
+  :root{
+    --bg-void:#F3F7F7;      /* light page base */
+    --bg-deep:#FFFFFF;      /* alt section — white */
+    --bg-panel:#FFFFFF;     /* card / panel surface */
+    --bg-panel-2:#EAF4F2;   /* soft teal wash — input / chip / elevated */
+    --line:rgba(18,58,60,.10);
+    --line-strong:rgba(18,58,60,.18);
+
+    --sig-1:#23C7B2; --sig-2:#12A695; --sig-3:#0E8577; --sig-4:#0B6E68;
+    --grad-signature:linear-gradient(90deg,var(--sig-1) 0%,var(--sig-2) 48%,var(--sig-3) 100%);
+    --grad-signature-diag:linear-gradient(135deg,var(--sig-1) 0%,var(--sig-2) 55%,var(--sig-3) 100%);
+
+    --text-hi:#12363E;      /* dark-teal ink — headings */
+    --text-body:#4A616A;    /* body copy */
+    --text-muted:#7B8D92;
+    --text-invert:#FFFFFF;  /* text ON teal-filled buttons */
+
+    --glow-green:0 12px 28px -12px rgba(18,166,149,.38);
+    --glow-cyan:0 12px 28px -12px rgba(18,166,149,.32);
+    --glow-blue:0 12px 28px -12px rgba(18,166,149,.30);
+    --glow-signature:0 12px 30px -10px rgba(18,166,149,.34);
+    --shadow-soft:0 1px 2px rgba(16,45,48,.05),0 14px 32px -16px rgba(16,45,48,.20);
+    --shadow-lift:0 2px 6px rgba(16,45,48,.06),0 28px 56px -20px rgba(14,110,106,.32);
+
+    --r-sm:12px; --r-md:18px; --r-lg:26px;
+  }
+  body{background:var(--bg-void);color:var(--text-hi);
+    font-family:"Noto Sans Hebrew","Assistant","Segoe UI",Arial,sans-serif;line-height:1.75}
+  h1,h2,h3,.wordmark{letter-spacing:-.01em}
+
+  /* rounded corners across the board (undo the sharp system) */
+  .card,.decide .item,.decide-note,.ba-card,.meta-card,.price,.car-frame,
+  .cmp-scroll,.cost{border-radius:var(--r-md)}
+  .btn,.wa-float,.credits,.price .rib,.meta-badge,.meta-pills span,
+  footer .draft,.car-btn,.car-dots button{border-radius:999px}
+  .ico,.decide .item .ic,.meta-logos .lg,.step .n{border-radius:16px}
+
+  /* buttons — solid teal fill, white text, soft shadow (no neon) */
+  .btn-primary{box-shadow:var(--glow-signature)}
+  .btn-primary:hover{box-shadow:var(--shadow-lift)}
+  .btn-ghost{border-color:var(--sig-3);color:var(--sig-3)}
+  .btn-ghost.dark{border-color:var(--line-strong);color:var(--text-hi)}
+
+  /* LIGHT hero — soft teal wash, dark ink, subtle glow behind the brand */
+  .hero{color:var(--text-hi);
+    background:
+      radial-gradient(120% 82% at 86% 8%, rgba(35,199,178,.20), transparent 60%),
+      radial-gradient(88% 68% at 6% 98%, rgba(14,133,119,.14), transparent 58%),
+      linear-gradient(168deg,#F2FBF9 0%,#E7F3F1 100%)}
+  .hero::before{opacity:.025}
+  .hero h1,.hero .sub b{color:var(--text-hi)}
+  /* the brand raster is a bright gradient; a soft white halo keeps it crisp on light */
+  .hero-brand .logo-full{filter:drop-shadow(0 6px 18px rgba(16,45,48,.14))}
+
+  /* section rhythm — alternate white / soft-teal washes; cards stay white */
+  .decide-sec{background:var(--bg-panel-2);border-block:1px solid var(--line)}
+  .steps{background:var(--bg-void)}
+  .ba{background:var(--bg-panel-2)}
+  .meta-trust{background:var(--bg-void)}
+  .pricing{background:var(--bg-panel-2)}
+  .card,.decide .item,.decide-note,.price,.ba-card.without,.ba-card.with,.meta-card{background:#fff}
+  .decide .item .ic,.ico{background:var(--bg-panel-2)}
+
+  /* topbar + carousel controls → light glass */
+  .topbar{background:rgba(255,255,255,.88);border-block-end:1px solid var(--line);
+    backdrop-filter:blur(12px) saturate(140%)}
+  .car-frame img{background:var(--bg-panel-2)}
+  .car-btn{background:rgba(255,255,255,.9);color:var(--text-hi);border-color:var(--line-strong)}
+  .meta-logos .lg{background:#fff}
+
+  /* comparison table teal tint (was cyan) */
+  .cmp-table thead th{background:var(--bg-panel-2)}
+  td.cmp-b{background:rgba(18,166,149,.06)}
+
+  /* dark-teal footer — a calm anchor; the transparent brand raster reads on it */
+  footer{background:#0F2F35;color:rgba(255,255,255,.66)}
+  footer .built-il,footer .wrap div{color:rgba(255,255,255,.6)}
 </style>
 </head>
 <body>
