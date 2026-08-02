@@ -205,6 +205,9 @@ router.post(
         senderType: 'human',
         messageText: text,
         waMessageId,
+        // Meta accepted the send → 'sent'. Delivery/read/failed are advanced later
+        // by the status webhook. Simulator mode (no live number) has no receipts.
+        status: simulated ? 'simulated' : 'sent',
       },
     });
     await prisma.conversation.update({

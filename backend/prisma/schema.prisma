@@ -353,6 +353,10 @@ model Message {
   messageText    String
   intent         String?
   waMessageId    String? // Meta's message id — for inbound idempotency
+  // Delivery state for OUTBOUND messages, advanced by Meta's status webhooks
+  // (sent → delivered → read; or failed). Null for inbound/customer messages and
+  // until the first receipt arrives. Additive/nullable — MIGRATION 11_message_status.
+  status         String?
   rawPayload     Json?
   createdAt      DateTime @default(now())
 

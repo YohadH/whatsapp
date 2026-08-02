@@ -90,6 +90,33 @@ router.post(
       }
     }
 
+    // Delivery/read/failed receipts → advance our outbound Message.status so the
+    // inbox can show sent/delivered/read/failed ticks. (parseStatusEvents above is
+    // billing-only and drops non-priced events, so we read the raw statuses here.)
+    // Monotonic: never regress a status, and treat `failed` as terminal.
+    try {
+      const statuses = req.body?.entry?.[0]?.changes?.[0]?.value?.statuses;
+      if (Array.isArray(statuses)) {
+        const RANK = { sent: 1, delivered: 2, read: 3 };
+        for (const s of statuses) {
+          if (!s?.id || !s?.status) continue;
+          if (s.status === 'failed') {
+            await prisma.message.updateMany({ where: { waMessageId: s.id }, data: { status: 'failed' } });
+            continue;
+          }
+          const rank = RANK[s.status];
+          if (!rank) continue;
+          const msg = await prisma.message.findFirst({ where: { waMessageId: s.id }, select: { id: true, status: true } });
+          if (!msg || msg.status === 'failed') continue;
+          if (rank > (RANK[msg.status] || 0)) {
+            await prisma.message.update({ where: { id: msg.id }, data: { status: s.status } });
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[webhook] delivery-status update error:', err.message);
+    }
+
     if (!parsed || !parsed.text) return;
     if (!parsed.phoneNumberId) {
       console.warn('[webhook] payload missing phone_number_id — cannot route to a tenant');

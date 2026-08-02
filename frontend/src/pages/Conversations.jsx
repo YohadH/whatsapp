@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client.js';
-import { Spinner, errMsg, INTENT_LABELS } from '../components/ui.jsx';
+import { Spinner, errMsg, INTENT_LABELS, StatusBadge } from '../components/ui.jsx';
 
 // WhatsApp-Web-style inbox: a conversation list on one side and a live chat
 // thread on the other, with a composer to reply to the customer. The chat chrome
@@ -69,6 +69,7 @@ export default function Conversations() {
   const [sending, setSending] = useState(false);
   const [sendErr, setSendErr] = useState('');
   const [mobileThread, setMobileThread] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
 
   const scrollRef = useRef(null);
   const endRef = useRef(null);
@@ -115,6 +116,7 @@ export default function Conversations() {
   function selectConv(id) {
     setSelId(id);
     setMobileThread(true);
+    setInfoOpen(false);
     setSendErr('');
     setDraft('');
   }
@@ -241,7 +243,7 @@ export default function Conversations() {
       </aside>
 
       {/* ── Chat thread (left side in RTL) ── */}
-      <section className={`${mobileThread ? 'flex' : 'hidden'} md:flex flex-1 min-w-0 flex-col`}>
+      <section className={`${mobileThread ? 'flex' : 'hidden'} md:flex flex-1 min-w-0 flex-col relative`}>
         {!selId ? (
           <div className="flex-1 grid place-items-center text-center px-6" style={{ background: WA.panel }}>
             <div>
@@ -260,6 +262,7 @@ export default function Conversations() {
               onBack={() => setMobileThread(false)}
               onDone={markDone}
               onAssign={assignHuman}
+              onInfo={() => setInfoOpen(true)}
             />
 
             {/* messages */}
@@ -301,6 +304,16 @@ export default function Conversations() {
                 </button>
               </form>
             </div>
+
+            {infoOpen && conv && (
+              <InfoDrawer
+                conv={conv}
+                onClose={() => setInfoOpen(false)}
+                onDone={markDone}
+                onAssign={assignHuman}
+                onSaved={() => loadConv(selId, true)}
+              />
+            )}
           </>
         )}
       </section>
@@ -308,7 +321,7 @@ export default function Conversations() {
   );
 }
 
-function ThreadHeader({ conv, onBack, onDone, onAssign }) {
+function ThreadHeader({ conv, onBack, onDone, onAssign, onInfo }) {
   const name = conv?.customer?.name || 'ללא שם';
   const phone = conv?.whatsappPhone || '';
   return (
@@ -337,9 +350,9 @@ function ThreadHeader({ conv, onBack, onDone, onAssign }) {
               <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
             </IconBtn>
           )}
-          <Link to={`/conversations/${conv.id}`} className="hidden sm:grid place-items-center h-9 w-9 rounded-full hover:bg-black/5 text-slate-600" title="פרטים מלאים">
+          <IconBtn title="פרטי השיחה" onClick={onInfo}>
             <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 16v-4M12 8h.01" /></svg>
-          </Link>
+          </IconBtn>
         </div>
       )}
     </div>
@@ -381,8 +394,9 @@ function MessageList({ messages, endRef }) {
               >
                 {senderTag && <div className="text-[11px] font-semibold mb-0.5" style={{ color: WA.green }}>{senderTag}</div>}
                 <span>{m.messageText}</span>
-                <span className="inline-block text-[10.5px] align-bottom mr-2 float-left mt-1" style={{ color: WA.meta }}>
+                <span className="inline-flex items-center gap-1 text-[10.5px] align-bottom mr-2 float-left mt-1" style={{ color: WA.meta }}>
                   {hhmm(m.createdAt)}
+                  {out && <StatusTicks status={m.status} pending={m._pending} />}
                 </span>
               </div>
             </div>
@@ -390,6 +404,130 @@ function MessageList({ messages, endRef }) {
         );
       })}
       <div ref={endRef} />
+    </div>
+  );
+}
+
+// WhatsApp-style delivery ticks for OUTBOUND messages.
+function StatusTicks({ status, pending }) {
+  const grey = '#8696a0';
+  const blue = '#53bdeb';
+  if (pending) {
+    return (
+      <span title="נשלח…" className="inline-flex">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={grey} strokeWidth="2.2"><circle cx="12" cy="12" r="9" /><path d="M12 7.5V12l3 2" strokeLinecap="round" /></svg>
+      </span>
+    );
+  }
+  if (!status) return null;
+  if (status === 'failed') {
+    return (
+      <span className="inline-flex items-center gap-0.5" style={{ color: '#ef4444' }} title="ההודעה לא נשלחה ללקוח">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><circle cx="12" cy="12" r="9" /><path d="M12 8v4M12 16h.01" strokeLinecap="round" /></svg>
+        <span className="font-semibold">לא נשלח</span>
+      </span>
+    );
+  }
+  const doubled = status === 'delivered' || status === 'read';
+  const color = status === 'read' ? blue : grey;
+  const title = status === 'read' ? 'נקראה' : status === 'delivered' ? 'נמסרה' : status === 'simulated' ? 'מצב סימולטור' : 'נשלחה';
+  return (
+    <span title={title} className="inline-flex">
+      {doubled ? (
+        <svg width="18" height="11" viewBox="0 0 18 11" fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M1 6 4 9 10.5 1.7" /><path d="M6.5 6 9.5 9 16 1.7" /></svg>
+      ) : (
+        <svg width="13" height="11" viewBox="0 0 13 11" fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M1.5 6 5 9 11.5 1.7" /></svg>
+      )}
+    </span>
+  );
+}
+
+// Slide-over with the full conversation detail (lead info, collected answers,
+// internal note, quick actions) — opened from the ℹ button in the thread header.
+function InfoDrawer({ conv, onClose, onDone, onAssign, onSaved }) {
+  const [note, setNote] = useState(conv.notes || '');
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { setNote(conv.notes || ''); }, [conv.id]);
+
+  async function saveNote() {
+    setSaving(true);
+    try { await api.post(`/api/conversations/${conv.id}/note`, { note }); onSaved?.(); }
+    catch { /* keep the drawer open on failure */ }
+    finally { setSaving(false); }
+  }
+  function exportConv() {
+    const blob = new Blob([JSON.stringify(conv, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `conversation-${conv.id}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+  const answers = conv.answers || [];
+
+  return (
+    <>
+      <div className="absolute inset-0 bg-black/20 z-20" onClick={onClose} />
+      <aside className="absolute top-0 bottom-0 z-30 w-full sm:w-[372px] bg-slate-50 shadow-2xl flex flex-col" style={{ insetInlineEnd: 0 }}>
+        <div style={{ background: WA.panel }} className="flex items-center gap-3 px-4 py-3 border-b border-slate-200 shrink-0">
+          <button onClick={onClose} className="p-1.5 -mr-1 rounded-full hover:bg-black/5" aria-label="סגירה">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
+          <h3 className="font-semibold text-slate-800">פרטי השיחה</h3>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          <div className="flex flex-wrap gap-2 items-center">
+            <StatusBadge status={conv.status} />
+            {conv.status !== 'completed' && <button onClick={onDone} className="btn-ghost text-xs">סמן כטופל</button>}
+            {!conv.needsHuman && <button onClick={onAssign} className="btn-ghost text-xs">העבר לנציג</button>}
+            <button onClick={exportConv} className="btn-ghost text-xs">ייצוא</button>
+          </div>
+
+          <div className="card">
+            <h4 className="font-semibold mb-3">פרטים</h4>
+            <dl className="text-sm space-y-2">
+              <Row k="ציון ליד" v={<span className="badge bg-indigo-50 text-indigo-700">{conv.leadScore}</span>} />
+              <Row k="תהליך נוכחי" v={conv.flow?.name || '—'} />
+              <Row k="נשלח קישור" v={conv.linkSent ? 'כן' : 'לא'} />
+              <Row k="צריך נציג" v={conv.needsHuman ? 'כן' : 'לא'} />
+              <Row k="נוצר" v={new Date(conv.createdAt).toLocaleString('he-IL')} />
+            </dl>
+          </div>
+
+          <div className="card">
+            <h4 className="font-semibold mb-3">פרטים שנאספו</h4>
+            {answers.length === 0 ? (
+              <p className="text-sm text-slate-400">לא נאספו פרטים</p>
+            ) : (
+              <ul className="text-sm space-y-2">
+                {answers.map((a) => (
+                  <li key={a.id}>
+                    <div className="text-slate-500">{a.questionText || a.question?.questionText}</div>
+                    <div className="font-medium">{a.answer}</div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="card">
+            <h4 className="font-semibold mb-3">הערה פנימית</h4>
+            <textarea className="input h-24" value={note} onChange={(e) => setNote(e.target.value)} />
+            <button onClick={saveNote} className="btn-primary w-full mt-2" disabled={saving}>{saving ? 'שומר…' : 'שמירת הערה'}</button>
+          </div>
+        </div>
+      </aside>
+    </>
+  );
+}
+
+function Row({ k, v }) {
+  return (
+    <div className="flex justify-between gap-3">
+      <dt className="text-slate-500">{k}</dt>
+      <dd className="font-medium text-slate-800 text-left">{v}</dd>
     </div>
   );
 }
