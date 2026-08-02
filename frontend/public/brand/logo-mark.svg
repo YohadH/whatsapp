@@ -6,10 +6,12 @@
     </linearGradient>
   </defs>
   <rect width="64" height="64" rx="15" fill="#1C1C1E"/>
+  <!-- geometric "H" (vector, font-independent) -->
   <g fill="#ffffff">
     <rect x="21" y="17" width="7" height="25" rx="2"/>
     <rect x="36" y="17" width="7" height="25" rx="2"/>
     <rect x="21" y="26" width="22" height="6.5" rx="2"/>
   </g>
+  <!-- signature blue→pink swoosh -->
   <path d="M15 47C28 53 40 51 49 44" stroke="url(#hs)" stroke-width="4" stroke-linecap="round" fill="none"/>
 </svg>
