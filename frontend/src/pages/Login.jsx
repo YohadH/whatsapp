@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
-import Logo from '../components/Logo.jsx';
 
 export default function Login() {
   const { login, user } = useAuth();
@@ -45,7 +44,7 @@ export default function Login() {
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8">
         <div className="text-center mb-7">
           <div className="flex justify-center mb-3">
-            <Logo className="text-4xl text-ink-900" gid="login" />
+            <img src="/brand/logo-transparent.png" alt="HeyIL" className="h-20 w-auto" />
           </div>
           <p className="text-sm text-slate-500 mt-1">כניסת מנהל/ת</p>
         </div>

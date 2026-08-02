@@ -22,13 +22,13 @@
 <meta property="og:url" content="https://heyil.co.il/">
 <meta property="og:title" content="סוכן וואטסאפ בעברית לעסקים — עונה, קובע תורים ושומר כל ליד | HeyIL">
 <meta property="og:description" content="סוכן וואטסאפ בעברית שעונה תוך שניות, קובע תורים ושומר כל פנייה — מהמידע של העסק שלכם בלבד, על WhatsApp Business API הרשמי של Meta.">
-<meta property="og:image" content="https://heyil.co.il/landing/assets/brand/logo-transparent.png">
+<meta property="og:image" content="https://heyil.co.il/brand/logo.png">
 <meta property="og:image:alt" content="HeyIL — סוכן וואטסאפ בעברית לעסקים">
 <!-- Twitter -->
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="סוכן וואטסאפ בעברית לעסקים | HeyIL">
 <meta name="twitter:description" content="סוכן וואטסאפ בעברית שעונה תוך שניות, קובע תורים ושומר כל פנייה — על WhatsApp Business API הרשמי של Meta.">
-<meta name="twitter:image" content="https://heyil.co.il/landing/assets/brand/logo-transparent.png">
+<meta name="twitter:image" content="https://heyil.co.il/brand/logo.png">
 <!-- Structured data (AEO): Organization + the SaaS product with its two pricing tiers -->
 <script type="application/ld+json">
 {
@@ -39,7 +39,7 @@
       "@id": "https://heyil.co.il/#org",
       "name": "HeyIL",
       "url": "https://heyil.co.il/",
-      "logo": "https://heyil.co.il/landing/assets/brand/logo-icon.png",
+      "logo": "https://heyil.co.il/brand/logo-mark-512.png",
       "description": "סוכן וואטסאפ בעברית לעסקים — עונה ללקוחות, קובע תורים, מסווג ושומר כל ליד, על WhatsApp Business API הרשמי של Meta.",
       "areaServed": "IL",
       "contactPoint": {
@@ -199,16 +199,17 @@
   .topbar.show{transform:translateY(0)}
   .topbar .wrap{display:flex;align-items:center;justify-content:center}
   .wordmark{display:flex;align-items:center;justify-content:center}
-  /* REAL brand rasters (01/08): logo-transparent.png = full horizontal lockup,
-     logo-icon.png = bubble mark only. Backgrounds removed, so they sit on any dark surface. */
+  /* REAL brand raster (02/08): /brand/logo-transparent.png = the new Hey+IL wordmark
+     (ink "Hey", blue "IL", blue→pink swoosh) with the white canvas removed — for LIGHT
+     surfaces only; dark surfaces (footer) keep the white text .wm wordmark. */
   .logo-full{height:44px;width:auto;display:block}
   .topbar .logo-full{height:58px}
   @media (max-width:600px){
-    /* the 11vw clamp lands on its 64px floor on phones — too timid for the hero opener */
-    .hero-brand .logo-full{height:112px}
+    .hero-brand .logo-full{height:67px}
   }
-  .hero-brand{display:flex;align-items:center;justify-content:center;margin-block-end:26px}
-  .hero-brand .logo-full{height:clamp(170px,11vw,104px)}
+  /* margin-block-start = breathing room between the page top and the brand lockup (owner request 02/08) */
+  .hero-brand{display:flex;align-items:center;justify-content:center;margin-block-start:40px;margin-block-end:26px}
+  .hero-brand .logo-full{height:102px}
 
   /* ---- hero ---- */
   /* content-sized (01/08): the full-viewport min-height + vertical centering pushed the brand
@@ -489,7 +490,7 @@
 
   /* rounded corners across the board (undo the sharp system) */
   .card,.decide .item,.decide-note,.ba-card,.meta-card,.price,.car-frame,
-  .cmp-scroll,.cost{border-radius:var(--r-md)}
+  .cost{border-radius:var(--r-md)}
   .btn,.wa-float,.credits,.price .rib,.meta-badge,.meta-pills span,
   footer .draft,.car-btn,.car-dots button{border-radius:999px}
   .ico,.decide .item .ic,.meta-logos .lg,.step .n{border-radius:16px}
@@ -524,10 +525,6 @@
   .car-frame img{background:var(--bg-panel-2)}
   .car-btn{background:rgba(255,255,255,.9);color:var(--text-hi);border-color:var(--line-strong)}
   .meta-logos .lg{background:#fff}
-
-  /* comparison table teal tint (was cyan) */
-  .cmp-table thead th{background:var(--bg-panel-2)}
-  td.cmp-b{background:rgba(18,166,149,.06)}
 
   /* Ink footer — a calm anchor */
   footer{background:#1C1C1E;color:rgba(255,255,255,.66)}
@@ -595,6 +592,23 @@
   .wire path{stroke:var(--sig-2);stroke-width:2.4;stroke-dasharray:6 8;stroke-linecap:round;fill:none;animation:dashMove 1.1s linear infinite}
   @keyframes dashMove{to{stroke-dashoffset:-28}}
   .keepnum .note{max-width:620px;margin:38px auto 0;text-align:center;color:var(--text-muted);font-size:14.5px}
+  /* mobile: the 3-node row gets cramped → rearrange as a triangle (HeyIL apex,
+     the two WhatsApp nodes below, wires running diagonally). Grid areas are
+     placed explicitly, so RTL column flipping can't scramble the shape. */
+  @media (max-width:640px){
+    .diagram{display:grid;grid-template-columns:1fr 1fr;justify-items:center;align-items:center;
+      max-width:340px;margin-inline:auto;row-gap:4px}
+    .diagram .node.center{grid-area:1/1/2/3}
+    .diagram .wire{grid-row:2;flex:none;width:88px;min-width:0;margin-block:10px}
+    /* nth-child, NOT :first-of-type — nodes and wires are all <div>s, so
+       .wire:first-of-type never matches (the first div is a .node).
+       Grid column 1 is the RIGHT side in RTL: tilt each wire toward its node. */
+    .diagram .wire:nth-child(2){grid-column:1;transform:rotate(35deg)}
+    .diagram .wire:nth-child(4){grid-column:2;transform:rotate(-35deg)}
+    /* "המספר שלכם" (last DOM node) leads the RTL read → right slot */
+    .diagram .node:last-child{grid-area:3/1}
+    .diagram .node:first-child{grid-area:3/2}
+  }
 
   /* C · gradient CTA band */
   .cta-band{padding-block:clamp(24px,5vw,44px)}
@@ -665,7 +679,7 @@
 <div class="topbar" id="topbar">
   <div class="wrap">
     <div class="wordmark">
-      <span class="wm" dir="ltr" aria-label="HeyIL"><span class="wm-hey">Hey<svg class="wm-sw" viewBox="0 0 100 14" preserveAspectRatio="none" fill="none"><defs><linearGradient id="wmT" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#1A69F5"/><stop offset=".55" stop-color="#7B5CF0"/><stop offset="1" stop-color="#F7A8C8"/></linearGradient></defs><path d="M2 8C28 15 62 13 90 4c4-1.3 7-3 8-3.5" stroke="url(#wmT)" stroke-width="3" stroke-linecap="round"/></svg></span><span class="wm-il">IL</span></span>
+      <img class="logo-full" src="/brand/logo-transparent.png" alt="HeyIL">
     </div>
   </div>
 </div>
@@ -703,7 +717,7 @@
   <div class="wrap hero-inner">
     <div>
       <div class="hero-brand rise" style="animation-delay:.05s">
-        <span class="wm" dir="ltr" aria-label="HeyIL"><span class="wm-hey">Hey<svg class="wm-sw" viewBox="0 0 100 14" preserveAspectRatio="none" fill="none"><defs><linearGradient id="wmH" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#1A69F5"/><stop offset=".55" stop-color="#7B5CF0"/><stop offset="1" stop-color="#F7A8C8"/></linearGradient></defs><path d="M2 8C28 15 62 13 90 4c4-1.3 7-3 8-3.5" stroke="url(#wmH)" stroke-width="3" stroke-linecap="round"/></svg></span><span class="wm-il">IL</span></span>
+        <img class="logo-full" src="/brand/logo-transparent.png" alt="HeyIL">
       </div>
       <h1 class="rise" style="animation-delay:.12s">מערכת ניהול וואטסאפ לעסקים<br><span class="hl">עם סוכן שמכיר את העסק שלכם על בוריו</span></h1>
       <div class="sub rise" style="animation-delay:.19s">
@@ -961,21 +975,6 @@
     <!-- ===== full per-package comparison (mirrors the price quote) ===== -->
     <style>
       .cmp{margin-top:64px}
-      .cmp-head{max-width:640px;margin:0 auto 28px;text-align:center}
-      .cmp-scroll{overflow-x:auto;border:1px solid var(--line);background:var(--bg-panel)}
-      table.cmp-table{width:100%;min-width:580px;border-collapse:collapse;font-size:15px}
-      .cmp-table th,.cmp-table td{padding:13px 16px;text-align:start;vertical-align:top;border-block-end:1px solid var(--line)}
-      .cmp-table thead th{font-family:"Rubik",sans-serif;font-weight:700;color:var(--text-hi);background:var(--bg-panel-2);border-block-end:1px solid var(--line-strong)}
-      .cmp-table thead th small{display:block;font-family:"Assistant",sans-serif;font-weight:600;font-size:12px;color:var(--text-muted);margin-block-start:3px}
-      .cmp-table thead th.col-b{color:var(--sig-3)}
-      .cmp-grp th{font-family:"Rubik",sans-serif;font-weight:700;color:var(--sig-3);font-size:13px;letter-spacing:.02em;background:rgba(255,255,255,.035);padding-block:12px}
-      td.cmp-feat{color:var(--text-body);font-weight:600;width:44%}
-      td.cmp-val{width:28%;color:var(--text-body)}
-      td.cmp-b{background:rgba(34,211,238,.045)}
-      .cmp-y{color:#34D67A;font-weight:800}
-      .cmp-n{color:var(--text-muted)}
-      .cmp-hi{color:var(--text-hi);font-weight:700}
-      @media(max-width:640px){.cmp-table{font-size:13px}.cmp-table th,.cmp-table td{padding:10px 10px}}
       .cost-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:26px}
       .cost{border:1px solid var(--line);background:var(--bg-panel);padding:18px}
       .cost .k{font-family:"Rubik",sans-serif;font-weight:700;color:var(--text-hi);margin-block-end:7px}
@@ -984,47 +983,7 @@
     </style>
 
     <div class="cmp">
-      <div class="cmp-head"><h2 class="grad-title">מה בדיוק מקבלים בכל חבילה</h2></div>
-      <div class="cmp-scroll">
-        <table class="cmp-table">
-          <thead>
-            <tr>
-              <th>רכיב</th>
-              <th>א׳ · ניהול<small>₪350/חודש + ₪2,500 הקמה</small></th>
-              <th class="col-b">ב׳ · מנוהל מלא<small>₪650/חודש + ₪4,500 הקמה</small></th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr class="cmp-grp"><th colspan="3">הקמה ובנייה</th></tr>
-            <tr><td class="cmp-feat">סוכן AI WhatsApp על ה-API הרשמי של Meta, בעברית ובקול המותג</td><td class="cmp-val"><span class="cmp-y">✓</span></td><td class="cmp-val cmp-b"><span class="cmp-y">✓</span></td></tr>
-            <tr><td class="cmp-feat">אימון הסוכן על מאגר הידע (מחירון, שירותים, שו״ת, מדיניות)</td><td class="cmp-val"><span class="cmp-y">✓</span></td><td class="cmp-val cmp-b"><span class="cmp-y">✓</span> <span class="cmp-hi">כולל RAG על קטלוג/מסמכים</span></td></tr>
-            <tr><td class="cmp-feat">זרימות שיחה מובנות</td><td class="cmp-val">עד 3 זרימות</td><td class="cmp-val cmp-b"><span class="cmp-hi">ללא הגבלה + זרימת מכירה מלאה</span></td></tr>
-
-            <tr class="cmp-grp"><th colspan="3">יכולות הסוכן</th></tr>
-            <tr><td class="cmp-feat">מענה אוטומטי 24/7 + תפריט חכם</td><td class="cmp-val"><span class="cmp-y">✓</span></td><td class="cmp-val cmp-b"><span class="cmp-y">✓</span></td></tr>
-            <tr><td class="cmp-feat">איסוף וסינון לידים</td><td class="cmp-val"><span class="cmp-y">✓</span></td><td class="cmp-val cmp-b"><span class="cmp-y">✓</span></td></tr>
-            <tr><td class="cmp-feat">תיאום פגישות אוטומטי (חיבור ליומן)</td><td class="cmp-val">בסיסי</td><td class="cmp-val cmp-b"><span class="cmp-hi">מלא + תזכורות</span></td></tr>
-            <tr><td class="cmp-feat">העברה חכמה לנציג אנושי (handoff)</td><td class="cmp-val"><span class="cmp-y">✓</span></td><td class="cmp-val cmp-b"><span class="cmp-y">✓</span> <span class="cmp-hi">+ ניתוב לפי נושא</span></td></tr>
-            <tr><td class="cmp-feat">הסמכת לידים (שאלות סינון + ניקוד איכות)</td><td class="cmp-val"><span class="cmp-n">—</span></td><td class="cmp-val cmp-b"><span class="cmp-y">✓</span></td></tr>
-            <tr><td class="cmp-feat">שליחת קטלוג / הצעות מוצר מתוך השיחה</td><td class="cmp-val"><span class="cmp-n">—</span></td><td class="cmp-val cmp-b"><span class="cmp-y">✓</span></td></tr>
-            <tr><td class="cmp-feat">קמפיינים יוצאים (תפוצה, מעקב, follow-up אוטומטי)</td><td class="cmp-val"><span class="cmp-n">—</span></td><td class="cmp-val cmp-b"><span class="cmp-y">✓</span></td></tr>
-
-            <tr class="cmp-grp"><th colspan="3">אינטגרציות</th></tr>
-            <tr><td class="cmp-feat">חיבור CRM / העברת לידים</td><td class="cmp-val">בסיסי — מייל / Webhook / Sheet</td><td class="cmp-val cmp-b"><span class="cmp-hi">מלא ודו-כיווני</span> — CRM + יומן + מערכות נוספות</td></tr>
-
-            <tr class="cmp-grp"><th colspan="3">ניהול ואופטימיזציה חודשית</th></tr>
-            <tr><td class="cmp-feat">ליטוש הסוכן לפי שיחות אמת</td><td class="cmp-val">חודשי</td><td class="cmp-val cmp-b"><span class="cmp-hi">דו-שבועי</span></td></tr>
-            <tr><td class="cmp-feat">שינויים שוטפים</td><td class="cmp-val">עד 3 קטנים/חודש</td><td class="cmp-val cmp-b"><span class="cmp-hi">ללא הגבלה</span></td></tr>
-            <tr><td class="cmp-feat">דוח ביצועים חודשי</td><td class="cmp-val">הודעות, לידים, שו״ת מובילות</td><td class="cmp-val cmp-b"><span class="cmp-hi">מתקדם</span> + ניתוח המרות והמלצות</td></tr>
-            <tr><td class="cmp-feat">ניהול קמפיינים + פגישת אסטרטגיה חודשית</td><td class="cmp-val"><span class="cmp-n">—</span></td><td class="cmp-val cmp-b"><span class="cmp-y">✓</span></td></tr>
-
-            <tr class="cmp-grp"><th colspan="3">תמיכה</th></tr>
-            <tr><td class="cmp-feat">ערוץ ותגובת תמיכה</td><td class="cmp-val">מייל / וואטסאפ — עד 2 ימי עבודה</td><td class="cmp-val cmp-b"><span class="cmp-hi">עדיפות</span> — עד 4 שעות עבודה</td></tr>
-            <tr><td class="cmp-feat">שינויים חינם אחרי עלייה לאוויר</td><td class="cmp-val">30 יום</td><td class="cmp-val cmp-b">30 יום</td></tr>
-          </tbody>
-        </table>
-      </div>
-
+      <!-- (full per-package comparison table removed 02/08 — unreadable on mobile; the two price cards above carry the details) -->
       <!-- how billing works: subscription + credits + Meta 3rd-party cost -->
       <div class="cost-grid">
         <div class="cost">
@@ -1074,7 +1033,8 @@
     </g>
   </svg>
   <div class="wrap">
-    <span class="wm" dir="ltr" aria-label="HeyIL"><span class="wm-hey">Hey<svg class="wm-sw" viewBox="0 0 100 14" preserveAspectRatio="none" fill="none"><defs><linearGradient id="wmF" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#4785FB"/><stop offset=".55" stop-color="#9B84F4"/><stop offset="1" stop-color="#F7A8C8"/></linearGradient></defs><path d="M2 8C28 15 62 13 90 4c4-1.3 7-3 8-3.5" stroke="url(#wmF)" stroke-width="3" stroke-linecap="round"/></svg></span><span class="wm-il">IL</span></span>
+    <img class="logo-full" src="/brand/logo-transparent-dark.png" alt="HeyIL" style="height:56px;margin:0 auto 14px">
+
     <div class="built-il">🇮🇱 נבנה בישראל</div>
     <div>HeyIL · שירות ישראלי · יוהד חכים · וואטסאפ: 054-553-2316</div>
   </div>
