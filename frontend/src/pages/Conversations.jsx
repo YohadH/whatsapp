@@ -280,7 +280,7 @@ export default function Conversations() {
               {sendErr && (
                 <div className="mb-2 text-xs rounded-lg bg-amber-50 text-amber-800 border border-amber-200 px-3 py-2 flex items-start justify-between gap-3">
                   <span>{sendErr}</span>
-                  <Link to="/broadcast" className="shrink-0 underline whitespace-nowrap">שליחה מרובה ←</Link>
+                  <Link to="/broadcast" className="shrink-0 underline whitespace-nowrap">דיוור ←</Link>
                 </div>
               )}
               <form onSubmit={send} className="flex items-end gap-2">

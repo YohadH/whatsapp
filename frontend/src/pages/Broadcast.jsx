@@ -43,6 +43,32 @@ export default function Broadcast() {
   const [job, setJob] = useState(null); // the campaign being watched (polled)
   const [quota, setQuota] = useState(null); // { cap, used, remaining } rolling 24h
 
+  // Contacts inside Meta's 24h customer-service window — the only numbers a
+  // FREE-TEXT send is allowed to reach. Picked ones are merged into the send list.
+  const [eligible, setEligible] = useState([]);
+  const [eligibleLoading, setEligibleLoading] = useState(true);
+  const [picked, setPicked] = useState(() => new Set()); // phones selected from the eligible list
+
+  const loadEligible = () => {
+    setEligibleLoading(true);
+    return api
+      .get('/api/broadcast/eligible')
+      .then((r) => setEligible(r.data.contacts || []))
+      .catch(() => setEligible([]))
+      .finally(() => setEligibleLoading(false));
+  };
+
+  const togglePicked = (phone) =>
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(phone)) next.delete(phone);
+      else next.add(phone);
+      return next;
+    });
+
+  // Hours left in a contact's 24h window, for the "נותרו Xש׳" hint.
+  const hoursLeft = (expiresAt) => Math.max(0, Math.round((new Date(expiresAt) - Date.now()) / 3600000));
+
   const jobActive = job?.status === 'running';
   const canResume =
     job && ['stopped', 'quota_reached', 'aborted'].includes(job.status) && job.cursor < job.total;
@@ -138,6 +164,7 @@ export default function Broadcast() {
   useEffect(() => {
     loadTemplates();
     refreshQuota();
+    loadEligible();
     // Re-attach to the last campaign (it keeps running server-side even if the
     // page was closed), or show one that's waiting to be resumed.
     api
@@ -219,12 +246,24 @@ export default function Broadcast() {
     });
   }
 
-  const contacts = rows
+  const fileContacts = rows
     .map((r) => ({
       phone: r[phoneColumn],
       vars: (mode === 'template' ? varColumns : varColumns.slice(0, 1)).map((c) => (c ? r[c] : '')),
     }))
     .filter((c) => String(c.phone ?? '').trim());
+
+  // Picked 24h-window contacts join the send list; their name fills {{1}} / {name}.
+  const pickedContacts = eligible
+    .filter((c) => picked.has(c.phone))
+    .map((c) => ({
+      phone: c.phone,
+      vars: Array.from({ length: Math.max(varCount, 0) }, (_, i) => (i === 0 ? c.name || '' : '')),
+    }));
+
+  // File rows win on duplicates (they may carry mapped variables).
+  const seenPhones = new Set(fileContacts.map((c) => String(c.phone).trim()));
+  const contacts = [...fileContacts, ...pickedContacts.filter((c) => !seenPhones.has(String(c.phone).trim()))];
 
   const canSend =
     contacts.length > 0 &&
@@ -289,7 +328,7 @@ export default function Broadcast() {
   return (
     <div>
       <PageHeader
-        title="שליחה מרובה"
+        title="דיוור"
         subtitle="העלאת רשימת מספרים ושליחת הודעה לכולם"
         actions={<button type="button" className="btn-primary" onClick={openCreate}>+ תבנית חדשה</button>}
       />
@@ -481,6 +520,46 @@ export default function Broadcast() {
         {/* File + mapping */}
         <div className="card space-y-3">
           <h3 className="font-semibold">2. רשימת המספרים</h3>
+
+          {/* Contacts inside Meta's 24h service window — free-text eligible without a template */}
+          <div className="rounded-xl border border-green-200 bg-green-50/60 p-3">
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <span className="text-sm font-medium text-green-900">💬 בחלון 24 השעות של Meta ({eligible.length})</span>
+              <button type="button" className="text-xs text-green-700 hover:underline" disabled={eligibleLoading} onClick={loadEligible}>
+                {eligibleLoading ? 'טוען…' : '↻ רענון'}
+              </button>
+            </div>
+            <p className="text-xs text-green-800/80 mb-2">
+              לקוחות שכתבו לכם ב-24 השעות האחרונות — לפי כללי Meta מותר לשלוח להם גם <b>טקסט חופשי</b>, בלי תבנית. סמנו כדי לצרף לרשימת השליחה (השם ימלא את {'{name}'} / {'{{1}}'}).
+            </p>
+            {eligibleLoading ? (
+              <Spinner />
+            ) : eligible.length === 0 ? (
+              <p className="text-xs text-green-800/70">אין כרגע לקוחות בחלון הפעיל — הרשימה מתמלאת כשלקוחות כותבים אליכם.</p>
+            ) : (
+              <>
+                <div className="flex gap-3 mb-1.5 text-xs">
+                  <button type="button" className="text-green-700 hover:underline" onClick={() => setPicked(new Set(eligible.map((c) => c.phone)))}>בחירת הכל</button>
+                  {picked.size > 0 && (
+                    <button type="button" className="text-slate-500 hover:underline" onClick={() => setPicked(new Set())}>ניקוי ({picked.size})</button>
+                  )}
+                </div>
+                <ul className="max-h-44 overflow-y-auto divide-y divide-green-100">
+                  {eligible.map((c) => (
+                    <li key={c.phone}>
+                      <label className="flex items-center gap-2.5 py-1.5 cursor-pointer text-sm">
+                        <input type="checkbox" className="accent-green-600" checked={picked.has(c.phone)} onChange={() => togglePicked(c.phone)} />
+                        <span className="flex-1 min-w-0 truncate">{c.name || 'ללא שם'}</span>
+                        <span className="text-xs text-slate-500" dir="ltr">{c.phone}</span>
+                        <span className="text-[11px] text-green-700 shrink-0">נותרו {hoursLeft(c.windowExpiresAt)}ש׳</span>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
+
           <label className="btn-ghost cursor-pointer text-sm inline-block">
             {parsing ? 'קורא…' : 'העלאת קובץ CSV / XLSX'}
             <input type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={(e) => onFile(e.target.files?.[0])} />

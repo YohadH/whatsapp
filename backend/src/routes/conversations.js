@@ -193,7 +193,7 @@ router.post(
       // 24h-window expiry (or any Meta send error) → friendly, actionable message.
       let msg = err.message || 'שליחת ההודעה נכשלה';
       if (err.code === 131047 || /24\s*hours/i.test(msg)) {
-        msg = 'עברו יותר מ-24 שעות מההודעה האחרונה של הלקוח — מחוץ לחלון הזמן אפשר לשלוח רק תבנית מאושרת (דרך "שליחה מרובה").';
+        msg = 'עברו יותר מ-24 שעות מההודעה האחרונה של הלקוח — מחוץ לחלון הזמן אפשר לשלוח רק תבנית מאושרת (דרך "דיוור").';
       }
       return res.status(err.status || 502).json({ error: msg, code: err.code || null });
     }

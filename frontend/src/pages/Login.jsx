@@ -44,7 +44,7 @@ export default function Login() {
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8">
         <div className="text-center mb-7">
           <div className="flex justify-center mb-3">
-            <img src="/brand/logo-transparent.png" alt="HeyIL" className="h-20 w-auto" />
+            <img src="/brand/logo-transparent.png" alt="HeyIL" className="h-28 w-auto" />
           </div>
           <p className="text-sm text-slate-500 mt-1">כניסת מנהל/ת</p>
         </div>

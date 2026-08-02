@@ -298,6 +298,44 @@ router.get(
   })
 );
 
+// GET /api/broadcast/eligible → contacts inside Meta's 24h customer-service
+// window (customers whose last INBOUND message is <24h old). These are the only
+// numbers WhatsApp will accept a FREE-TEXT send to; everyone else needs an
+// approved template. Deduped by phone, freshest window first.
+router.get(
+  '/eligible',
+  asyncHandler(async (req, res) => {
+    const WINDOW_MS = 24 * 60 * 60 * 1000;
+    const since = new Date(Date.now() - WINDOW_MS);
+    const msgs = await prisma.message.findMany({
+      where: { tenantId: req.tenantId, senderType: 'customer', createdAt: { gte: since } },
+      orderBy: { createdAt: 'desc' },
+      select: { conversationId: true, createdAt: true },
+    });
+    // newest-first → first hit per conversation IS its latest inbound
+    const latestByConv = new Map();
+    for (const m of msgs) if (!latestByConv.has(m.conversationId)) latestByConv.set(m.conversationId, m.createdAt);
+    if (!latestByConv.size) return res.json({ contacts: [] });
+    const convs = await prisma.conversation.findMany({
+      where: { id: { in: [...latestByConv.keys()] }, tenantId: req.tenantId },
+      select: { id: true, whatsappPhone: true, customer: { select: { name: true } } },
+    });
+    // a customer can have several conversations — keep the freshest window per phone
+    const byPhone = new Map();
+    for (const c of convs) {
+      const lastInboundAt = latestByConv.get(c.id);
+      const prev = byPhone.get(c.whatsappPhone);
+      if (!prev || lastInboundAt > prev.lastInboundAt) {
+        byPhone.set(c.whatsappPhone, { phone: c.whatsappPhone, name: c.customer?.name || null, lastInboundAt });
+      }
+    }
+    const contacts = [...byPhone.values()]
+      .map((c) => ({ ...c, windowExpiresAt: new Date(c.lastInboundAt.getTime() + WINDOW_MS) }))
+      .sort((a, b) => b.lastInboundAt - a.lastInboundAt);
+    res.json({ contacts });
+  })
+);
+
 // GET /api/broadcast/jobs → recent jobs, newest first (no contact lists)
 router.get(
   '/jobs',

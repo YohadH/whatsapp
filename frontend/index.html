@@ -204,12 +204,12 @@
      surfaces only; dark surfaces (footer) keep the white text .wm wordmark. */
   .logo-full{height:44px;width:auto;display:block}
   .topbar .logo-full{height:58px}
-  @media (max-width:600px){
-    .hero-brand .logo-full{height:67px}
-  }
-  /* margin-block-start = breathing room between the page top and the brand lockup (owner request 02/08) */
-  .hero-brand{display:flex;align-items:center;justify-content:center;margin-block-start:40px;margin-block-end:26px}
-  .hero-brand .logo-full{height:102px}
+  /* 02/08 owner: ONE size rule on purpose — an earlier mobile media-query variant
+     sat before the base rule and lost the cascade tie (same specificity, later
+     wins), so phones never shrank. The house-lockup is ~1.17:1 (not a wide
+     wordmark), so it needs real height; 72px keeps clear air above it. */
+  .hero-brand{display:flex;align-items:center;justify-content:center;margin-block-start:72px;margin-block-end:26px}
+  .hero-brand .logo-full{height:128px}
 
   /* ---- hero ---- */
   /* content-sized (01/08): the full-viewport min-height + vertical centering pushed the brand
@@ -270,24 +270,9 @@
   .card p{color:var(--text-body);font-size:15.5px}
   .card p b{color:var(--text-hi);font-weight:700}
 
-  .decide-sec::before{content:"";position:absolute;inset:0;opacity:.02;pointer-events:none;z-index:0;
-    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
-  .decide-sec .wrap{position:relative;z-index:1}
-
-  /* ---- solution / how-it-decides ---- */
-  .decide-sec{background:var(--bg-deep);position:relative;border-block:1px solid var(--line)}
-  .decide-intro{max-width:720px;margin:0 auto 40px;text-align:center}
-  .decide-intro .lead{margin-inline:auto}
-  .decide{max-width:860px;margin-inline:auto;display:flex;flex-direction:column;gap:16px}
-  .decide .item{background:var(--bg-panel);border:1px solid var(--line);border-radius:0;padding:22px 24px;
-    display:flex;gap:16px;align-items:flex-start;box-shadow:var(--shadow-soft);transition:border-color .2s,box-shadow .2s}
-  .decide .item:hover{border-color:var(--sig-3);box-shadow:var(--glow-cyan)}
-  .decide .item .ic{width:40px;height:40px;flex:none;border-radius:0;background:var(--bg-panel-2);color:var(--sig-3);
-    display:flex;align-items:center;justify-content:center}
-  .decide .item h3{font-size:17px;font-weight:700;margin-block-end:4px;color:var(--text-hi)}
-  .decide .item p{color:var(--text-body);font-size:15px}
-  .decide .item p b{color:var(--text-hi)}
-  /* Meta-compliance note (V3 copy §3) — proof-of-seriousness, gradient inline-start accent */
+  /* Meta-compliance note (V3 copy §3) — proof-of-seriousness, gradient inline-start accent.
+     (The old .decide card-list styles were removed 02/08 — the solution section is now
+     the dark radial .sol-sec band; this note survives inside it as a white highlight card.) */
   .decide-note{max-width:860px;margin:28px auto 0;background:var(--bg-panel);border:1px solid var(--line);
     padding:20px 24px;color:var(--text-body);font-size:15px;line-height:1.6;position:relative;overflow:hidden}
   .decide-note::before{content:"";position:absolute;inset-block:0;inset-inline-start:0;width:3px;background:var(--grad-signature)}
@@ -466,21 +451,21 @@
     --line-strong:#D4D4D8;
 
     /* solid accents = Signal blue; the gradient is decorative only (blue→violet→pink) */
-    --sig-1:#1A69F5; --sig-2:#4785FB; --sig-3:#1A69F5; --sig-4:#1257D6;
-    --grad-signature:linear-gradient(90deg,#1A69F5 0%,#7B5CF0 55%,#F7A8C8 100%);
-    --grad-signature-diag:linear-gradient(135deg,#1A69F5 0%,#7B5CF0 55%,#F7A8C8 100%);
+    --sig-1:#0054FC; --sig-2:#3E7BFF; --sig-3:#0054FC; --sig-4:#0043D6;
+    --grad-signature:linear-gradient(90deg,#0054FC 0%,#8504FD 55%,#EE03FD 100%);
+    --grad-signature-diag:linear-gradient(135deg,#0054FC 0%,#8504FD 55%,#EE03FD 100%);
 
     --text-hi:#1C1C1E;      /* Ink — headings */
     --text-body:#48484A;    /* body copy */
     --text-muted:#8E8E94;   /* secondary */
     --text-invert:#FFFFFF;  /* text ON the blue-filled buttons */
 
-    --glow-green:0 12px 28px -12px rgba(26,105,245,.30);
-    --glow-cyan:0 12px 28px -12px rgba(26,105,245,.26);
-    --glow-blue:0 12px 28px -12px rgba(26,105,245,.28);
-    --glow-signature:0 12px 30px -10px rgba(26,105,245,.30);
+    --glow-green:0 12px 28px -12px rgba(0,84,252,.30);
+    --glow-cyan:0 12px 28px -12px rgba(0,84,252,.26);
+    --glow-blue:0 12px 28px -12px rgba(0,84,252,.28);
+    --glow-signature:0 12px 30px -10px rgba(0,84,252,.30);
     --shadow-soft:0 1px 2px rgba(20,20,25,.05),0 14px 32px -16px rgba(20,20,25,.16);
-    --shadow-lift:0 2px 6px rgba(20,20,25,.06),0 28px 56px -20px rgba(26,105,245,.24);
+    --shadow-lift:0 2px 6px rgba(20,20,25,.06),0 28px 56px -20px rgba(0,84,252,.24);
 
     --r-sm:12px; --r-md:18px; --r-lg:26px;
   }
@@ -504,14 +489,13 @@
   /* LIGHT hero — Paper wash with soft blue + pink glows, Ink text */
   .hero{color:var(--text-hi);
     background:
-      radial-gradient(120% 82% at 86% 8%, rgba(26,105,245,.13), transparent 60%),
-      radial-gradient(88% 68% at 6% 98%, rgba(247,168,200,.20), transparent 58%),
+      radial-gradient(120% 82% at 86% 8%, rgba(0,84,252,.13), transparent 60%),
+      radial-gradient(88% 68% at 6% 98%, rgba(238,3,253,.12), transparent 58%),
       linear-gradient(168deg,#FFFFFF 0%,#F4F5F8 100%)}
   .hero::before{opacity:.02}
   .hero h1,.hero .sub b{color:var(--text-hi)}
 
   /* section rhythm — alternate white / soft-teal washes; cards stay white */
-  .decide-sec{background:var(--bg-panel-2);border-block:1px solid var(--line)}
   .steps{background:var(--bg-void)}
   .ba{background:var(--bg-panel-2)}
   .meta-trust{background:var(--bg-void)}
@@ -534,7 +518,7 @@
   .wm{position:relative;display:inline-flex;align-items:flex-end;font-family:"Rubik","Assistant",sans-serif;font-weight:800;line-height:1;letter-spacing:-.02em}
   .wm-hey{position:relative;color:currentColor}
   .wm-sw{position:absolute;left:-4%;bottom:-.15em;width:112%;height:.4em;overflow:visible;pointer-events:none}
-  .wm-il{color:#1A69F5;font-weight:700;font-size:.5em;margin-inline-start:.1em}
+  .wm-il{color:#0054FC;font-weight:700;font-size:.5em;margin-inline-start:.1em}
   .topbar .wm{font-size:30px;color:var(--text-hi)}
   .hero-brand .wm{font-size:clamp(46px,9vw,66px);color:var(--text-hi)}
   footer .wm{font-size:34px;color:#fff;margin-block-end:14px}
@@ -546,21 +530,21 @@
   /* A · dark product-showcase band (contrast against the light sections) */
   .showcase{background:linear-gradient(165deg,#1C1C1E 0%,#232327 55%,#161618 100%);color:#EDEDF0;position:relative;overflow:hidden}
   .showcase::before{content:"";position:absolute;inset:0;pointer-events:none;background:
-    radial-gradient(58% 50% at 80% 6%,rgba(26,105,245,.24),transparent 60%),
-    radial-gradient(50% 42% at 8% 100%,rgba(247,168,200,.18),transparent 60%)}
+    radial-gradient(58% 50% at 80% 6%,rgba(0,84,252,.24),transparent 60%),
+    radial-gradient(50% 42% at 8% 100%,rgba(238,3,253,.18),transparent 60%)}
   .showcase .wrap{position:relative;z-index:1;display:grid;grid-template-columns:.92fr 1.08fr;gap:clamp(30px,5vw,64px);align-items:center}
   .showcase .eyebrow{margin-block-end:14px}
   .showcase h2{color:#fff;margin-block-end:16px}
   .showcase .sc-lead{color:#C7C7CC;font-size:clamp(16px,2vw,18px);margin-block-end:28px;max-width:520px}
   .sc-feats{list-style:none;display:flex;flex-direction:column;gap:18px}
   .sc-feats li{display:flex;gap:13px;align-items:flex-start}
-  .sc-feats .ic{width:42px;height:42px;flex:none;border-radius:13px;background:rgba(26,105,245,.18);color:#7EA8FF;
+  .sc-feats .ic{width:42px;height:42px;flex:none;border-radius:13px;background:rgba(0,84,252,.18);color:#7EA8FF;
     display:flex;align-items:center;justify-content:center;box-shadow:inset 0 0 0 1px rgba(126,168,255,.30)}
   .sc-feats h3{font-size:16.5px;color:#fff;margin-block-end:3px}
   .sc-feats p{color:#A9A9B0;font-size:14.5px;line-height:1.55}
   .sc-stage{position:relative;min-height:340px;display:flex;align-items:center;justify-content:center}
   .sc-glow{position:absolute;width:62%;height:46%;inset-block-start:4%;filter:blur(62px);pointer-events:none;
-    background:radial-gradient(circle,rgba(26,105,245,.5),transparent 70%);animation:scGlow 6s ease-in-out infinite}
+    background:radial-gradient(circle,rgba(0,84,252,.5),transparent 70%);animation:scGlow 6s ease-in-out infinite}
   .sc-browser{position:relative;width:100%;max-width:560px;border-radius:16px;overflow:hidden;background:#0b232a;
     border:1px solid rgba(255,255,255,.12);box-shadow:0 34px 74px -22px rgba(0,0,0,.62)}
   .sc-bar{display:flex;align-items:center;gap:7px;padding:11px 14px;background:rgba(255,255,255,.05);border-block-end:1px solid rgba(255,255,255,.08)}
@@ -570,11 +554,68 @@
   .sc-chip{position:absolute;background:rgba(255,255,255,.97);color:#12363E;border-radius:14px;padding:11px 14px;
     box-shadow:0 22px 46px -14px rgba(0,0,0,.5);font-size:13.5px;font-weight:600;display:flex;align-items:center;gap:9px;
     white-space:nowrap;animation:scFloat 5s ease-in-out infinite}
-  .sc-chip .dot{width:9px;height:9px;border-radius:50%;background:#1A69F5;box-shadow:0 0 0 4px rgba(26,105,245,.18)}
+  .sc-chip .dot{width:9px;height:9px;border-radius:50%;background:#0054FC;box-shadow:0 0 0 4px rgba(0,84,252,.18)}
   .sc-chip.one{inset-block-start:6%;inset-inline-start:-3%;animation-delay:.2s}
   .sc-chip.two{inset-block-end:9%;inset-inline-end:-2%;animation-delay:1.2s}
   @keyframes scFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
   @keyframes scGlow{0%,100%{opacity:.5}50%{opacity:.85}}
+
+  /* SOLUTION · radial-diagram band (02/08 v2) — adapted from the owner's "branding
+     approach" reference: start-aligned two-line gray/white header + plus chip, a
+     quote block, and a radial diagram whose SIX spokes are the six solution points
+     (nothing dropped). The brand wave sits at the hub; hovering a label bolds it
+     and lights its spoke (linked by a small JS hook, ids sln-1…6). */
+  .sol-sec{background:linear-gradient(165deg,#151517 0%,#1C1C1E 55%,#131315 100%);color:#fff;position:relative;overflow:hidden}
+  .sol-sec::before{content:"";position:absolute;inset:0;pointer-events:none;background:
+    radial-gradient(55% 45% at 85% 0%,rgba(0,84,252,.14),transparent 60%),
+    radial-gradient(45% 40% at 6% 100%,rgba(238,3,253,.07),transparent 60%)}
+  .sol-sec .wrap{position:relative;z-index:1}
+  .sol-head{display:flex;align-items:flex-start;gap:14px;margin-block-end:clamp(40px,6vw,64px)}
+  .sol-head .l1{display:block;color:#6e6e6e;font-weight:300;font-size:clamp(1.7rem,3.2vw,2.5rem);line-height:1.18;letter-spacing:-.01em}
+  .sol-head .l2{display:block;color:#fff;font-weight:600;font-family:"Rubik","Assistant",sans-serif;
+    font-size:clamp(1.7rem,3.2vw,2.5rem);line-height:1.18;letter-spacing:-.01em}
+  .sol-head .plus{height:28px;width:28px;flex:none;border:1px solid rgba(255,255,255,.2);border-radius:7px;
+    color:rgba(255,255,255,.7);display:flex;align-items:center;justify-content:center;margin-block-start:8px}
+  .sol-row{display:flex;flex-direction:column;gap:56px}
+  .sol-quote{max-width:440px;min-width:0}
+  .sol-quote .qm{display:block;color:#555;font-family:Georgia,"Times New Roman",serif;font-size:3.2rem;line-height:.7;margin-block-end:12px}
+  .sol-quote p{color:rgba(255,255,255,.9);font-size:clamp(1.05rem,1.5vw,1.28rem);line-height:1.58;font-weight:400}
+  .sol-quote .nm{margin-block-start:34px;font-size:1.15rem;font-weight:500;letter-spacing:.01em;color:#fff}
+  .sol-quote .rl{margin-block-start:4px;font-size:.85rem;letter-spacing:.02em;color:#6e6e6e}
+  .sol-diagram{position:relative;width:100%;max-width:400px;margin-inline:auto;aspect-ratio:1/1;flex:none}
+  .sol-diagram svg{position:absolute;inset:0;width:100%;height:100%;fill:none}
+  .sol-diagram circle{stroke:#fff;stroke-width:.18;opacity:.45}
+  .sol-diagram line{stroke:#fff;stroke-width:.18;opacity:.45;transition:stroke-width .3s,opacity .3s}
+  .sol-diagram line.on{stroke-width:.6;opacity:1}
+  .sol-diagram .hub{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)}
+  .sol-diagram .hub::before{content:"";position:absolute;inset:-30px;border-radius:50%;z-index:-1;
+    background:radial-gradient(circle,rgba(0,84,252,.35),transparent 70%);animation:scGlow 4s ease-in-out infinite}
+  .sol-diagram .hub i{font-style:normal;display:inline-block;font-size:clamp(42px,5.4vw,58px);line-height:1;
+    transform-origin:72% 82%;animation:heyWave 3s ease-in-out infinite;filter:drop-shadow(0 14px 32px rgba(0,84,252,.42))}
+  .sol-diagram .lb{position:absolute;transform:translate(-50%,-50%);white-space:nowrap;color:#fff;cursor:default;
+    font-size:clamp(.95rem,1.7vw,1.3rem);letter-spacing:-.01em;font-weight:300;
+    transition:font-weight .25s,background .25s,border-color .25s}
+  .sol-diagram .lb.on{font-weight:700}
+  /* desktop label positions — bare text floating outside the ring, like the reference */
+  .lb1{left:94%;top:50%}.lb2{left:73%;top:9%}.lb3{left:27%;top:9%}
+  .lb4{left:6%;top:50%}.lb5{left:27%;top:91%}.lb6{left:73%;top:91%}
+  @keyframes heyWave{0%,52%,100%{transform:rotate(0)}60%{transform:rotate(16deg)}68%{transform:rotate(-9deg)}
+    76%{transform:rotate(13deg)}84%{transform:rotate(-5deg)}91%{transform:rotate(7deg)}}
+  .sol-sec .decide-note{margin-block-start:clamp(44px,6vw,64px)}
+  @media(max-width:767px){
+    /* phones: bare floating text reads as disconnected at this scale — labels become
+       glass node-pills pinned to the spoke TIPS, so the diagram reads as a node map */
+    .sol-diagram{max-width:340px}
+    .sol-diagram .lb{font-size:12.5px;font-weight:500;background:rgba(255,255,255,.07);
+      border:1px solid rgba(255,255,255,.14);border-radius:999px;padding:6px 12px;backdrop-filter:blur(4px)}
+    .sol-diagram .lb.on{font-weight:700;background:rgba(0,84,252,.30);border-color:rgba(124,166,255,.65)}
+    .lb1{left:82%;top:50%}.lb2{left:67%;top:19%}.lb3{left:33%;top:19%}
+    .lb4{left:18%;top:50%}.lb5{left:33%;top:81%}.lb6{left:67%;top:81%}
+  }
+  @media(min-width:960px){
+    .sol-row{flex-direction:row;align-items:center;justify-content:space-between;gap:40px}
+    .sol-diagram{max-width:480px;margin-inline:0 24px}
+  }
 
   /* B · keep-your-number connection diagram */
   .keepnum{background:var(--bg-void)}
@@ -619,7 +660,7 @@
   .cta-inner>*{position:relative;z-index:1}
   .cta-inner h2{color:#fff;font-size:clamp(26px,4vw,42px);margin-block-end:12px}
   .cta-inner p{color:rgba(255,255,255,.92);font-size:clamp(16px,2vw,19px);max-width:580px;margin:0 auto 26px}
-  .cta-inner .btn{background:#fff;color:#1257D6}
+  .cta-inner .btn{background:#fff;color:#0043D6}
   .cta-inner .btn:hover{transform:translateY(-2px);filter:none;box-shadow:0 18px 40px -12px rgba(0,0,0,.42)}
   .cta-trust{margin-block-start:20px;color:rgba(255,255,255,.85);font-size:13.5px;display:flex;gap:16px;justify-content:center;flex-wrap:wrap}
   .cta-trust span{display:inline-flex;align-items:center;gap:6px}
@@ -739,7 +780,7 @@
             <figcaption>יצירת תהליכים למענה אוטומטי</figcaption>
           </figure>
           <figure class="car-slide">
-            <div class="car-frame"><img src="/landing/assets/app/broadcast.png" alt="שליחה מרובה: דיוור ללקוחות על בסיס תבניות מאושרות של Meta" loading="lazy" decoding="async"></div>
+            <div class="car-frame"><img src="/landing/assets/app/broadcast.png" alt="דיוור ללקוחות על בסיס תבניות מאושרות של Meta" loading="lazy" decoding="async"></div>
             <figcaption>דיוור ללקוחות על בסיס תבניות של מטא</figcaption>
           </figure>
         </div>
@@ -752,36 +793,40 @@
   </div>
 </header>
 
-<!-- SOLUTION / HOW IT DECIDES -->
-<section class="decide-sec">
+<!-- SOLUTION — radial diagram band; six spokes = six solution points, brand wave at the hub -->
+<section class="sol-sec">
   <div class="wrap">
-    <div class="decide-intro">
-      <h2 class="grad-title">הפתרון</h2>
+    <div class="sol-head" data-reveal>
+      <div>
+        <span class="l1">הפתרון שלנו</span>
+        <span class="l2">מערכת אחת שעושה סדר</span>
+      </div>
+      <span class="plus" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M6 1v10M1 6h10"/></svg></span>
     </div>
-    <div class="decide">
-      <div class="item" data-reveal>
-        <div class="ic"><svg class="ico-glyph" aria-hidden="true"><use href="#ic-shield"/></svg></div>
-        <div><h3>הסוכן עונה אך ורק מתוך מאגר המידע של העסק שלכם.</h3><p>מחיר, שירות, שעה — מה שלא נמצא במאגר, הוא לא ממציא.</p></div>
+    <div class="sol-row">
+      <div class="sol-quote" data-reveal>
+        <span class="qm" aria-hidden="true">“</span>
+        <p>ראינו שוב ושוב את אותה תבנית — עסקים עם פוטנציאל שמאבדים לידים בין הודעות שלא נענו, תהליכים ידניים ומידע מפוזר. המערכת קיימת כדי ליישר את הכל לסיפור אחד ברור: סוכן אחד, מאגר ידע אחד, וכל שיחה וליד במקום אחד.</p>
+        <div class="nm">HeyIL</div>
+        <div class="rl">מערכת ניהול וואטסאפ עם סוכן AI בעברית</div>
       </div>
-      <div class="item" data-reveal>
-        <div class="ic"><svg class="ico-glyph" aria-hidden="true"><use href="#ic-chat"/></svg></div>
-        <div><h3>אין לכם מספר וואטסאפ עסקי? אין בעיה.</h3><p>אנחנו רוכשים, מגדירים ומחברים מספר בשבילכם — הכל עלינו.</p></div>
-      </div>
-      <div class="item" data-reveal>
-        <div class="ic"><svg class="ico-glyph" aria-hidden="true"><use href="#ic-clipboard"/></svg></div>
-        <div><h3>היסטוריה מלאה של כל שיחה שהסוכן ניהל.</h3><p>כל שיחה נשמרת בדשבורד — חוזרים, קוראים, ומדייקים את התשובות.</p></div>
-      </div>
-      <div class="item" data-reveal>
-        <div class="ic"><svg class="ico-glyph" aria-hidden="true"><use href="#ic-link"/></svg></div>
-        <div><h3>ניהול לידים וחיבור לממשקים שאתם כבר עובדים איתם.</h3><p>Google, Monday ועוד — הלידים זורמים ישירות לאן שנוח לכם.</p></div>
-      </div>
-      <div class="item" data-reveal>
-        <div class="ic"><svg class="ico-glyph" aria-hidden="true"><use href="#ic-route"/></svg></div>
-        <div><h3>שיחה שהתקיימה מול הסוכן והוא לא יודע איך לענות?</h3><p>מועבר אליכם מיד עם כל ההקשר.</p></div>
-      </div>
-      <div class="item" data-reveal>
-        <div class="ic"><svg class="ico-glyph" aria-hidden="true"><use href="#ic-mobile"/></svg></div>
-        <div><h3>האפליקציה מותאמת גם לתצורת מובייל.</h3><p>נהלו לידים, שיחות ותבניות ישירות מהנייד — אותה מערכת, בכל מקום.</p></div>
+      <div class="sol-diagram" data-reveal>
+        <svg viewBox="0 0 100 100" aria-hidden="true">
+          <circle cx="50" cy="50" r="30"/>
+          <line id="sln-1" x1="50" y1="50" x2="86" y2="50"/>
+          <line id="sln-2" x1="50" y1="50" x2="68" y2="18.8"/>
+          <line id="sln-3" x1="50" y1="50" x2="32" y2="18.8"/>
+          <line id="sln-4" x1="50" y1="50" x2="14" y2="50"/>
+          <line id="sln-5" x1="50" y1="50" x2="32" y2="81.2"/>
+          <line id="sln-6" x1="50" y1="50" x2="68" y2="81.2"/>
+        </svg>
+        <span class="hub" aria-hidden="true"><i>👋</i></span>
+        <span class="lb lb1" data-i="1">עונה רק מהמאגר</span>
+        <span class="lb lb2" data-i="2">העברה חכמה לנציג</span>
+        <span class="lb lb3" data-i="3">היסטוריה מלאה</span>
+        <span class="lb lb4" data-i="4">לידים ו-CRM</span>
+        <span class="lb lb5" data-i="5">מספר עסקי — עלינו</span>
+        <span class="lb lb6" data-i="6">מותאם למובייל</span>
       </div>
     </div>
     <p class="decide-note" data-reveal>מטא עדכנה בינואר 2026 את הכללים וחוסמת עוזרי-AI כלליים על WhatsApp Business — בוט חייב להיות מוגדר וייעודי לעסק שהוא משרת. הסוכן שלכם בנוי ככה מהיסוד: אין לו "מוח כללי" שעונה על הכל, יש לו רק את מה שאישרתם. <b>זה גם למה הוא לא ממציא, וגם למה הוא לא ייחסם.</b></p>
@@ -1033,7 +1078,7 @@
     </g>
   </svg>
   <div class="wrap">
-    <img class="logo-full" src="/brand/logo-transparent-dark.png" alt="HeyIL" style="height:56px;margin:0 auto 14px">
+    <img class="logo-full" src="/brand/logo-transparent-dark.png" alt="HeyIL" style="height:84px;margin:0 auto 14px">
 
     <div class="built-il">🇮🇱 נבנה בישראל</div>
     <div>HeyIL · שירות ישראלי · יוהד חכים · וואטסאפ: 054-553-2316</div>
@@ -1053,8 +1098,39 @@
   // 0. WhatsApp deep-link: every CTA now carries the wa.me URL statically in its href
   //    (the final CTA section + #lead anchor were removed 01/08). Number: 054-553-2316.
 
-  // 0.5 hero app carousel — scrollIntoView is direction-agnostic, so RTL needs no
-  //     scrollLeft sign gymnastics; IO keeps the dots honest when the user swipes.
+  // 0.4 solution radial diagram — an idle auto-cycle lights each spoke+label in
+  //     turn (also sweeps away sticky tap-"hover" on touch); desktop hover takes
+  //     priority while the pointer rests on a label. Runs only while on screen.
+  var solLbs = Array.prototype.slice.call(document.querySelectorAll('.sol-diagram .lb'));
+  if (solLbs.length) {
+    var solHover = false, solTimer = null, solIdx = 0;
+    var solLight = function(i){
+      solLbs.forEach(function(lb, j){
+        var on = j === i;
+        lb.classList.toggle('on', on);
+        var ln = document.getElementById('sln-' + lb.getAttribute('data-i'));
+        if (ln) ln.classList.toggle('on', on);
+      });
+    };
+    solLbs.forEach(function(lb, j){
+      lb.addEventListener('mouseenter', function(){ solHover = true; solIdx = j; solLight(j); });
+      lb.addEventListener('mouseleave', function(){ solHover = false; });
+    });
+    var solStart = function(){
+      if (!solTimer && !rm) solTimer = setInterval(function(){
+        if (!solHover) { solIdx = (solIdx + 1) % solLbs.length; solLight(solIdx); }
+      }, 2200);
+    };
+    var solStop = function(){ clearInterval(solTimer); solTimer = null; };
+    if ('IntersectionObserver' in window) {
+      new IntersectionObserver(function(es){
+        es.forEach(function(e){ if (e.isIntersecting) solStart(); else solStop(); });
+      }, {threshold: .3}).observe(document.querySelector('.sol-diagram'));
+    } else { solStart(); }
+  }
+
+  // 0.5 hero app carousel — track-only scrollBy (rect delta), so slide changes can
+  //     never scroll the page itself; IO keeps the dots honest when the user swipes.
   var track = document.getElementById('carTrack');
   if (track) {
     var slides = Array.prototype.slice.call(track.children);
@@ -1071,7 +1147,11 @@
     function mark(i){ dots.forEach(function(d, j){ d.classList.toggle('on', j === i); }); }
     function go(i){
       idx = (i + slides.length) % slides.length;
-      slides[idx].scrollIntoView({behavior: rm ? 'auto' : 'smooth', inline: 'center', block: 'nearest'});
+      // Horizontal-only scroll on the TRACK. scrollIntoView (even with block:'nearest')
+      // may also scroll ancestors vertically, yanking the page to the carousel on every
+      // auto-advance. Rect math keeps this RTL-safe without scrollLeft sign gymnastics.
+      var t = track.getBoundingClientRect(), s = slides[idx].getBoundingClientRect();
+      track.scrollBy({left: (s.left + s.width / 2) - (t.left + t.width / 2), behavior: rm ? 'auto' : 'smooth'});
       mark(idx);
     }
     mark(0);
