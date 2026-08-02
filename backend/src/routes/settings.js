@@ -166,10 +166,16 @@ router.post(
 // ── Integrations (owner-toggled connections) ─────────────────────────────────
 // Catalog of connectable services the owner can switch on/off. Enabled-state is
 // persisted per-tenant in Tenant.integrations (JSONB map of { slug: boolean }).
-// Google-group toggles (gmail/calendar/sheets) additionally drive the real gate
-// Tenant.googleIntegrationEnabled, so flipping one on reveals the "Connect Google"
-// flow. Non-Google entries record intent (the owner's chosen connections); the
-// actual data wiring is handled per service.
+// These toggles record the tenant's INTENT to use a service — they do NOT grant
+// any entitlement. In particular, the Google-group toggles (gmail/calendar/sheets)
+// must NOT touch Tenant.googleIntegrationEnabled: that column is the PAID Google
+// add-on entitlement gate, whose SOLE writer is the super-admin route
+// POST /api/admin/tenants/:id/google-integration (routes/admin.js). Deriving it
+// from a tenant-side toggle here would let a tenant self-grant the paid add-on for
+// free, and let an unrelated toggle silently revoke an admin-granted entitlement.
+// A tenant who flips a Google toggle on but has no admin-granted entitlement still
+// hits 403 "not_enabled" at /api/integrations/google/connect (integrations.js
+// requireGoogleEnabled), which re-reads googleIntegrationEnabled via the service.
 const INTEGRATION_CATALOG = [
   { slug: 'gmail', label: 'Gmail', desc: 'שליחת מיילים אוטומטית מתוך השיחה', group: 'google' },
   { slug: 'calendar', label: 'Google Calendar', desc: 'תיאום פגישות ויצירת אירועים ביומן', group: 'google' },
@@ -208,13 +214,14 @@ router.put(
     const current = readIntegrations(req.tenant);
     const next = { ...current, [slug]: enabled };
 
-    // Any Google-group toggle ON → enable the real Google gate; all OFF → disable.
-    const googleSlugs = INTEGRATION_CATALOG.filter((i) => i.group === 'google').map((i) => i.slug);
-    const anyGoogleOn = googleSlugs.some((s) => next[s]);
-
+    // Persist ONLY the intent map. Never derive/write googleIntegrationEnabled here —
+    // that is the paid add-on entitlement, granted exclusively by the super-admin
+    // route in routes/admin.js (see the block comment above). Writing it from a
+    // tenant-side toggle would let a tenant self-grant the paid add-on and would let
+    // an unrelated toggle clobber an admin-granted entitlement back to false.
     await prisma.tenant.update({
       where: { id: req.tenantId },
-      data: { integrations: next, googleIntegrationEnabled: anyGoogleOn },
+      data: { integrations: next },
     });
 
     res.json({ enabled: next });
