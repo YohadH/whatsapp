@@ -3,6 +3,8 @@ import prisma from '../lib/prisma.js';
 import { asyncHandler } from '../middleware/error.js';
 import { trackEvent, EVENTS } from '../services/analytics.js';
 import { notifyOwnerHandoff } from '../services/handoffNotify.js';
+import { sendWhatsAppMessage } from '../services/whatsapp.js';
+import { tenantWhatsAppCreds } from '../lib/tenantContext.js';
 
 const router = Router();
 
@@ -164,6 +166,52 @@ router.post(
       await notifyOwnerHandoff({ tenant: req.tenant, conversation, customer });
     }
     res.json(conversation);
+  })
+);
+
+// POST /api/conversations/:id/reply — a human agent sends a free-text WhatsApp
+// message to the customer from the dashboard, persisted as a `human` message.
+// WhatsApp only allows free-text inside the 24h customer-service window; outside
+// it Meta rejects the send (#131047) and we surface a clear "use a template" hint.
+router.post(
+  '/:id/reply',
+  asyncHandler(async (req, res) => {
+    const text = String(req.body?.text || '').trim();
+    if (!text) return res.status(400).json({ error: 'לא ניתן לשלוח הודעה ריקה' });
+    if (text.length > 4096) return res.status(400).json({ error: 'ההודעה ארוכה מדי (עד 4096 תווים)' });
+
+    const conv = await ownedConversation(req.params.id, req.tenantId);
+    if (!conv) return res.status(404).json({ error: 'Conversation not found' });
+
+    let waMessageId = null;
+    let simulated = false;
+    try {
+      const result = await sendWhatsAppMessage(tenantWhatsAppCreds(req.tenant), conv.whatsappPhone, text);
+      simulated = Boolean(result?.simulated);
+      waMessageId = result?.messages?.[0]?.id || null;
+    } catch (err) {
+      // 24h-window expiry (or any Meta send error) → friendly, actionable message.
+      let msg = err.message || 'שליחת ההודעה נכשלה';
+      if (err.code === 131047 || /24\s*hours/i.test(msg)) {
+        msg = 'עברו יותר מ-24 שעות מההודעה האחרונה של הלקוח — מחוץ לחלון הזמן אפשר לשלוח רק תבנית מאושרת (דרך "שליחה מרובה").';
+      }
+      return res.status(err.status || 502).json({ error: msg, code: err.code || null });
+    }
+
+    const message = await prisma.message.create({
+      data: {
+        tenantId: req.tenantId,
+        conversationId: conv.id,
+        senderType: 'human',
+        messageText: text,
+        waMessageId,
+      },
+    });
+    await prisma.conversation.update({
+      where: { id: conv.id },
+      data: { lastMessage: text, lastActivityAt: new Date() },
+    });
+    res.json({ message, simulated });
   })
 );
 
