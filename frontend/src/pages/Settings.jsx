@@ -7,12 +7,21 @@ import { launchEmbeddedSignup } from '../lib/fbEmbeddedSignup.js';
 export default function Settings() {
   const { user } = useAuth();
   const [health, setHealth] = useState(null);
-  // Bumped when an integration toggle changes, so the Google panel re-checks its
-  // gate (enabling a Google connection reveals the "Connect Google" flow).
-  const [bump, setBump] = useState(0);
+  // Google add-on entitlement state (Tenant.googleIntegrationEnabled — the PAID
+  // gate, flipped ONLY by a super-admin). Fetched once here and shared by both the
+  // Integrations list (to badge the Google-group toggles) and the GoogleConnect
+  // panel. Flipping a gmail/calendar toggle does NOT change this — it only records
+  // the tenant's intent — so there is no "bump to re-check the gate" anymore.
+  const [google, setGoogle] = useState(null);
+  const loadGoogle = () => {
+    api.get('/api/integrations/google/status')
+      .then((r) => setGoogle(r.data))
+      .catch(() => setGoogle({ enabled: false }));
+  };
 
   useEffect(() => {
     api.get('/health').then((res) => setHealth(res.data)).catch(() => {});
+    loadGoogle();
   }, []);
 
   return (
@@ -43,21 +52,30 @@ export default function Settings() {
       </div>
 
       <WhatsAppConnect />
-      <Integrations onChange={() => setBump((b) => b + 1)} />
-      <GoogleConnect refresh={bump} />
+      <Integrations google={google} />
+      <GoogleConnect status={google} reload={loadGoogle} />
       <Simulator />
     </div>
   );
 }
 
 // Owner-toggled connections (Gmail, Calendar, Sheets, Webhook/CRM, …). Each toggle
-// persists per-tenant; flipping a Google-group toggle also enables the Google
-// add-on gate, which reveals the "Connect Google" panel below.
-function Integrations({ onChange }) {
+// records the tenant's INTENT to use a service per-tenant (Tenant.integrations) —
+// it does NOT grant any entitlement. In particular, flipping a Google-group toggle
+// (gmail/calendar/sheets) does NOT enable the paid Google add-on: that gate is
+// Tenant.googleIntegrationEnabled, flipped only by a super-admin. So a Google-group
+// toggle can be ON while the add-on is still locked — we badge those rows and show a
+// clear "requires the paid add-on" note instead of the old silent no-op.
+function Integrations({ google }) {
   const [catalog, setCatalog] = useState(null);
   const [enabled, setEnabled] = useState({});
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+
+  // The paid Google add-on is entitled only when the status endpoint reports it.
+  // `null` = still loading → don't badge yet (avoid a flash of "locked").
+  const googleEntitled = google == null ? null : Boolean(google.enabled);
 
   useEffect(() => {
     api.get('/api/settings/integrations')
@@ -65,14 +83,19 @@ function Integrations({ onChange }) {
       .catch(() => setCatalog([]));
   }, []);
 
-  async function toggle(slug) {
+  async function toggle(slug, group) {
     const nextVal = !enabled[slug];
     setEnabled((e) => ({ ...e, [slug]: nextVal })); // optimistic
-    setBusy(slug); setError('');
+    setBusy(slug); setError(''); setNotice('');
     try {
       const r = await api.put('/api/settings/integrations', { slug, enabled: nextVal });
       setEnabled(r.data.enabled);
-      onChange?.();
+      // Turning a Google-group connection ON while the paid add-on isn't entitled
+      // saves the intent but can't actually connect Google — say so explicitly
+      // instead of leaving the user to wonder why nothing happened.
+      if (nextVal && group === 'google' && googleEntitled === false) {
+        setNotice('החיבור נשמר, אך תוסף Google (בתשלום) עדיין לא הופעל לחשבון שלכם. פנו למנהל המערכת כדי להפעיל אותו לפני חיבור החשבון.');
+      }
     } catch (err) {
       setEnabled((e) => ({ ...e, [slug]: !nextVal })); // revert on failure
       setError(err.response?.data?.error || 'עדכון החיבור נכשל');
@@ -89,19 +112,30 @@ function Integrations({ onChange }) {
       <h3 className="font-semibold mb-1">🔌 אינטגרציות וחיבורים</h3>
       <p className="text-sm text-gray-500 mb-4">הפעילו או כבו חיבורים למערכות חיצוניות — אפשר לערוך בכל רגע.</p>
       {error && <div className="rounded-lg bg-red-50 text-red-600 text-sm p-3 mb-3">{error}</div>}
+      {notice && <div className="rounded-lg bg-amber-50 text-amber-700 text-sm p-3 mb-3">{notice}</div>}
       <ul className="divide-y divide-slate-100">
-        {catalog.map((it) => (
-          <li key={it.slug} className="flex items-center justify-between gap-4 py-3">
-            <div className="flex items-center gap-3 min-w-0">
-              <span className="text-xl shrink-0" aria-hidden>{ICONS[it.slug] || '🔌'}</span>
-              <div className="min-w-0">
-                <div className="text-sm font-medium text-slate-800">{it.label}</div>
-                <div className="text-xs text-slate-500 truncate">{it.desc}</div>
+        {catalog.map((it) => {
+          const locked = it.group === 'google' && googleEntitled === false;
+          return (
+            <li key={it.slug} className="flex items-center justify-between gap-4 py-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="text-xl shrink-0" aria-hidden>{ICONS[it.slug] || '🔌'}</span>
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-slate-800 flex items-center gap-2">
+                    {it.label}
+                    {locked && (
+                      <span className="badge bg-amber-100 text-amber-700 text-[10px] font-medium" title="דורש הפעלת תוסף Google בתשלום על ידי מנהל המערכת">
+                        🔒 תוסף בתשלום
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs text-slate-500 truncate">{it.desc}</div>
+                </div>
               </div>
-            </div>
-            <Toggle on={!!enabled[it.slug]} busy={busy === it.slug} onClick={() => toggle(it.slug)} label={it.label} />
-          </li>
-        ))}
+              <Toggle on={!!enabled[it.slug]} busy={busy === it.slug} onClick={() => toggle(it.slug, it.group)} label={it.label} />
+            </li>
+          );
+        })}
       </ul>
     </div>
   );
@@ -123,26 +157,35 @@ function Toggle({ on, busy, onClick, label }) {
   );
 }
 
-// Google (Gmail + Calendar) add-on — paid, OFF by default. This component renders
-// the "Connect Google" button ONLY when the per-tenant flag is enabled (the status
-// endpoint returns enabled:false when the add-on isn't purchased, and this returns
-// null in that case → nothing is exposed). Infrastructure only; the owner turns the
-// flag on per tenant when a customer buys the add-on.
-function GoogleConnect({ refresh }) {
-  const [status, setStatus] = useState(null);
+// Google (Gmail + Calendar) add-on — paid, OFF by default. Entitlement lives in
+// Tenant.googleIntegrationEnabled (the paid gate, flipped only by a super-admin),
+// surfaced by /google/status as `enabled`. When NOT entitled we no longer render
+// nothing (the old silent no-op that made the Google-group toggles look broken) —
+// we render an explicit "not enabled for your account" card so the user gets
+// feedback and knows the paid add-on is required. `status`/`reload` are lifted to
+// the parent so this panel and the Integrations badges stay in sync.
+function GoogleConnect({ status, reload }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
-  function load() {
-    api.get('/api/integrations/google/status')
-      .then((r) => setStatus(r.data))
-      .catch(() => setStatus({ enabled: false }));
-  }
-  // Reload when mounted and whenever an integration toggle changes (refresh bump).
-  useEffect(() => { load(); }, [refresh]);
+  // Still loading the status → render nothing yet (avoids a flash of the locked card).
+  if (!status) return null;
 
-  // Flag OFF (or add-on not enabled) → render nothing at all.
-  if (!status || !status.enabled) return null;
+  // Not entitled to the paid add-on → show an explicit locked state, not silence.
+  if (!status.enabled) {
+    return (
+      <div className="card mt-4">
+        <h3 className="font-semibold mb-3">Google (Gmail + יומן) — תוסף</h3>
+        <div className="rounded-lg bg-amber-50 text-amber-700 text-sm p-3">
+          🔒 תוסף Google (בתשלום) עדיין לא הופעל לחשבון שלכם. הוא מאפשר יצירת אירועי
+          יומן ושליחת מיילים אוטומטית מתוך השיחה. פנו למנהל המערכת כדי להפעיל אותו.
+        </div>
+        {status.notMigrated && (
+          <p className="text-xs text-amber-500 mt-2">התוסף עדיין לא הופעל בשרת (נדרשת הפעלת מיגרציה).</p>
+        )}
+      </div>
+    );
+  }
 
   async function connect() {
     setError(''); setBusy(true);
@@ -158,7 +201,7 @@ function GoogleConnect({ refresh }) {
   }
   async function disconnect() {
     setError(''); setBusy(true);
-    try { await api.post('/api/integrations/google/disconnect'); load(); }
+    try { await api.post('/api/integrations/google/disconnect'); reload?.(); }
     catch (err) { setError(err.response?.data?.error || 'ניתוק Google נכשל'); }
     finally { setBusy(false); }
   }
@@ -178,9 +221,6 @@ function GoogleConnect({ refresh }) {
             {busy ? 'רגע…' : 'חיבור Google'}
           </button>
         </div>
-      )}
-      {status.notMigrated && (
-        <p className="text-xs text-amber-500 mt-2">התוסף עדיין לא הופעל בשרת (נדרשת הפעלת מיגרציה).</p>
       )}
       {error && <p className="text-xs text-red-500 mt-2">{error}</p>}
     </div>
