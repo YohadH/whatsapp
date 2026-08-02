@@ -424,6 +424,71 @@ export async function sendWhatsAppTemplate(
  * Returns { phone, text, name, waMessageId, phoneNumberId, raw } or null.
  * `phoneNumberId` (from value.metadata) is how the webhook routes to a tenant.
  */
+// Human-readable Hebrew label per media/non-text message kind, used both to build
+// the stored `messageText` fallback and (client-side) to pick the bubble affordance.
+const MEDIA_KIND_LABEL = {
+  image: 'תמונה',
+  video: 'סרטון',
+  audio: 'הודעה קולית',
+  voice: 'הודעה קולית',
+  document: 'מסמך',
+  sticker: 'מדבקה',
+  location: 'מיקום',
+  contacts: 'איש קשר',
+};
+
+/**
+ * Describe a non-text inbound WhatsApp message (image / audio / voice / video /
+ * document / sticker / location / contacts) as a STRUCTURED descriptor plus a
+ * clean human-readable fallback caption.
+ *
+ * Why: WhatsApp Cloud API media messages carry their real payload under a typed
+ * sub-object (`message.image`, `message.document`, …) — a media `id`, `mime_type`,
+ * optional `caption`, and for documents a `filename`. Previously the parser threw
+ * ALL of this away and stored the literal string `[image]` / `[audio]`, so the
+ * Conversations inbox could only ever show that placeholder. This helper preserves
+ * the caption + filename + media metadata so (a) the stored messageText is
+ * meaningful and (b) the inbox can render an actual media affordance.
+ *
+ * NOTE on serving the actual bytes: Cloud API media is NOT a public URL — fetching
+ * it requires a second Graph API call (`GET /{media-id}`) with the tenant's access
+ * token to obtain a short-lived download URL. That media-proxy is not built yet, so
+ * this descriptor exposes the metadata needed for it later (`mediaId`, `mimeType`)
+ * while the UI renders a typed media card (icon + caption + filename) rather than a
+ * bare `[image]` string. The full raw sub-object is preserved in `raw` for the proxy.
+ *
+ * @returns {{kind:string,label:string,caption:string|null,filename:string|null,
+ *   mediaId:string|null,mimeType:string|null,text:string}|null}
+ *   `null` when the message is a plain text/button/interactive message (no media).
+ */
+export function describeInboundMessage(message) {
+  if (!message || typeof message !== 'object') return null;
+  const kind = message.type;
+  // Only media/location/contacts kinds get a descriptor. A missing type, or a
+  // text/button/interactive message, has no media → null (the caller keeps its
+  // own text). This also makes the helper null-safe on malformed input.
+  if (!kind || kind === 'text' || kind === 'button' || kind === 'interactive') return null;
+
+  const media = message[kind]; // e.g. message.image, message.document, message.audio
+  const label = MEDIA_KIND_LABEL[kind] || kind;
+  const caption = typeof media?.caption === 'string' && media.caption.trim() ? media.caption.trim() : null;
+  const filename = typeof media?.filename === 'string' && media.filename.trim() ? media.filename.trim() : null;
+  const mediaId = media?.id || null;
+  const mimeType = media?.mime_type || null;
+
+  // Fallback caption stored in messageText: prefer the customer's own caption, then
+  // a document filename, else a clean typed Hebrew label — NEVER the bare `[image]`.
+  let text;
+  if (caption) text = caption;
+  else if (filename) text = filename;
+  else if (kind === 'location') {
+    const name = message.location?.name || message.location?.address;
+    text = name ? `${label}: ${name}` : label;
+  } else text = label;
+
+  return { kind, label, caption, filename, mediaId, mimeType, text };
+}
+
 export function parseIncomingMessage(payload) {
   try {
     const entry = payload?.entry?.[0];
@@ -438,6 +503,7 @@ export function parseIncomingMessage(payload) {
     const phoneNumberId = value?.metadata?.phone_number_id || null;
 
     let text = '';
+    let media = null;
     if (message.type === 'text') text = message.text?.body || '';
     else if (message.type === 'button') text = message.button?.text || '';
     else if (message.type === 'interactive') {
@@ -446,10 +512,13 @@ export function parseIncomingMessage(payload) {
         message.interactive?.list_reply?.title ||
         '';
     } else {
-      text = `[${message.type}]`;
+      // Media / location / contacts: keep the caption + filename + media metadata
+      // instead of collapsing to a bare `[image]` placeholder (see describeInboundMessage).
+      media = describeInboundMessage(message);
+      text = media?.text || `[${message.type}]`;
     }
 
-    return { phone, text, name, waMessageId: message.id, phoneNumberId, raw: message };
+    return { phone, text, name, waMessageId: message.id, phoneNumberId, media, raw: message };
   } catch (err) {
     console.error('[whatsapp] parse error', err.message);
     return null;

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client.js';
 import { Spinner, errMsg, INTENT_LABELS, StatusBadge } from '../components/ui.jsx';
+import MessageContent from '../components/MessageContent.jsx';
 
 // WhatsApp-Web-style inbox: a conversation list on one side and a live chat
 // thread on the other, with a composer to reply to the customer. The chat chrome
@@ -393,7 +394,7 @@ function MessageList({ messages, endRef }) {
                 style={{ background: out ? WA.out : WA.in, color: WA.ink, opacity: m._pending ? 0.7 : 1 }}
               >
                 {senderTag && <div className="text-[11px] font-semibold mb-0.5" style={{ color: WA.green }}>{senderTag}</div>}
-                <span>{m.messageText}</span>
+                <MessageContent message={m} />
                 <span className="inline-flex items-center gap-1 text-[10.5px] align-bottom mr-2 float-left mt-1" style={{ color: WA.meta }}>
                   {hhmm(m.createdAt)}
                   {out && <StatusTicks status={m.status} pending={m._pending} />}

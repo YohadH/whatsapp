@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../api/client.js';
 import { Spinner, StatusBadge, ErrorState, errMsg, INTENT_LABELS } from '../components/ui.jsx';
+import MessageContent from '../components/MessageContent.jsx';
 
 export default function ConversationDetail() {
   const { id } = useParams();
@@ -80,7 +81,7 @@ export default function ConversationDetail() {
                       : 'bg-brand-600 text-white'
                   }`}
                 >
-                  {m.messageText}
+                  <MessageContent message={m} />
                   <div className={`text-[10px] mt-1 ${m.senderType === 'agent' ? 'text-white/70' : 'text-gray-400'}`}>
                     {new Date(m.createdAt).toLocaleTimeString('he-IL')}
                   </div>
