@@ -5,10 +5,11 @@ import { useAuth } from '../context/AuthContext.jsx';
 const NAV = [
   { to: '/dashboard', label: 'דאשבורד', icon: '📊', end: true },
   { to: '/conversations', label: 'שיחות', icon: '💬' },
-  { to: '/leads', label: 'צינור לידים', icon: '🧲' },
+  { to: '/leads', label: 'מנהל לידים', icon: '🧲' },
   { to: '/flows', label: 'תהליכים', icon: '🔀' },
   { to: '/content', label: 'מאגר ידע וקישורים', icon: '📚' },
   { to: '/broadcast', label: 'דיוור', icon: '📤' },
+  { to: '/expenses', label: 'הוצאות', icon: '🧾' },
   { to: '/analytics', label: 'אנליטיקס', icon: '📈' },
   { to: '/credits', label: 'קרדיטים', icon: '🎟️' },
   { to: '/settings', label: 'הגדרות', icon: '⚙️' },

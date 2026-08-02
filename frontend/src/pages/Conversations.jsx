@@ -380,7 +380,14 @@ function MessageList({ messages, endRef }) {
         const day = dayLabel(m.createdAt);
         const showDay = day !== lastDay;
         lastDay = day;
-        const senderTag = m.senderType === 'agent' ? 'סוכן AI' : m.senderType === 'human' ? 'נציג/ה' : null;
+        // Honest sender tag: 'ai' = a real LLM wrote the text; 'flow'/'rules' = the
+        // deterministic bot did (incl. the out-of-credits fallback). Legacy agent
+        // messages (no via marker) get the neutral 'סוכן'.
+        const via = m.rawPayload?.via;
+        const senderTag =
+          m.senderType === 'agent'
+            ? via === 'ai' ? '✨ סוכן AI' : via ? '🤖 בוט' : 'סוכן'
+            : m.senderType === 'human' ? 'נציג/ה' : null;
         return (
           <div key={m.id}>
             {showDay && (
@@ -390,7 +397,8 @@ function MessageList({ messages, endRef }) {
             )}
             <div className={`flex ${out ? 'justify-end' : 'justify-start'}`}>
               <div
-                className="max-w-[78%] rounded-lg px-2.5 py-1.5 text-[14.5px] leading-relaxed whitespace-pre-wrap shadow-sm"
+                className="max-w-[78%] min-w-0 rounded-lg px-2.5 py-1.5 text-[14.5px] leading-relaxed whitespace-pre-wrap break-words shadow-sm"
+                dir="auto"
                 style={{ background: out ? WA.out : WA.in, color: WA.ink, opacity: m._pending ? 0.7 : 1 }}
               >
                 {senderTag && <div className="text-[11px] font-semibold mb-0.5" style={{ color: WA.green }}>{senderTag}</div>}
@@ -429,9 +437,19 @@ function StatusTicks({ status, pending }) {
       </span>
     );
   }
+  // Simulator sends never reached a real customer — say so loudly instead of
+  // rendering a tick that looks like a genuine "sent".
+  if (status === 'simulated') {
+    return (
+      <span className="inline-flex items-center gap-0.5" style={{ color: '#d97706' }} title="מצב סימולטור — ההודעה לא נשלחה ללקוח אמיתי">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /><path d="M12 9v4M12 17h.01" /></svg>
+        <span className="font-semibold">סימולציה</span>
+      </span>
+    );
+  }
   const doubled = status === 'delivered' || status === 'read';
   const color = status === 'read' ? blue : grey;
-  const title = status === 'read' ? 'נקראה' : status === 'delivered' ? 'נמסרה' : status === 'simulated' ? 'מצב סימולטור' : 'נשלחה';
+  const title = status === 'read' ? 'נקראה' : status === 'delivered' ? 'נמסרה' : 'נשלחה';
   return (
     <span title={title} className="inline-flex">
       {doubled ? (

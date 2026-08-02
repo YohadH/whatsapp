@@ -3,8 +3,9 @@ import prisma from '../lib/prisma.js';
 import { asyncHandler } from '../middleware/error.js';
 import { trackEvent, EVENTS } from '../services/analytics.js';
 import { notifyOwnerHandoff } from '../services/handoffNotify.js';
-import { sendWhatsAppMessage } from '../services/whatsapp.js';
+import { sendWhatsAppMessage, describeInboundMessage } from '../services/whatsapp.js';
 import { tenantWhatsAppCreds } from '../lib/tenantContext.js';
+import { downloadAndCache, findCached } from '../services/media.js';
 
 const router = Router();
 
@@ -12,6 +13,50 @@ const router = Router();
 async function ownedConversation(id, tenantId) {
   return prisma.conversation.findFirst({ where: { id, tenantId } });
 }
+
+// GET /api/conversations/media/:messageId — the media PROXY. Inbound WhatsApp
+// media has no public URL (only a media id on rawPayload); this route downloads
+// the bytes with the tenant's token, caches them under uploads/media/<tenant>/,
+// and streams them back — which is what lets the inbox show the actual image
+// instead of a typed placeholder card. Auth comes from the router mount
+// (requireAuth + withTenant), and the message must belong to the caller's tenant.
+router.get(
+  '/media/:messageId',
+  asyncHandler(async (req, res) => {
+    const msg = await prisma.message.findFirst({
+      where: { id: req.params.messageId, tenantId: req.tenantId },
+      select: { rawPayload: true },
+    });
+    if (!msg) return res.status(404).json({ error: 'Message not found' });
+
+    const media = describeInboundMessage(msg.rawPayload);
+    if (!media?.mediaId) return res.status(404).json({ error: 'אין מדיה בהודעה זו' });
+
+    // Serve straight from cache when we already fetched it once (also survives
+    // Meta's media expiry). Receipts cache in their own bucket — check both.
+    const cached =
+      findCached(req.tenantId, media.mediaId, 'media') ||
+      findCached(req.tenantId, media.mediaId, 'receipts');
+    if (cached) {
+      res.setHeader('Content-Type', cached.mimeType);
+      res.setHeader('Cache-Control', 'private, max-age=86400');
+      return res.sendFile(cached.filePath);
+    }
+
+    try {
+      const { filePath, mimeType } = await downloadAndCache({
+        creds: tenantWhatsAppCreds(req.tenant),
+        tenantId: req.tenantId,
+        mediaId: media.mediaId,
+      });
+      res.setHeader('Content-Type', mimeType);
+      res.setHeader('Cache-Control', 'private, max-age=86400');
+      return res.sendFile(filePath);
+    } catch (err) {
+      return res.status(err.status || 502).json({ error: err.message });
+    }
+  })
+);
 
 // GET /api/conversations?status=&needsHuman=&search=&page=&pageSize=
 router.get(

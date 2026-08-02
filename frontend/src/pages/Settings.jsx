@@ -51,10 +51,69 @@ export default function Settings() {
         </div>
       </div>
 
+      <BusinessProfile />
       <WhatsAppConnect />
       <Integrations google={google} />
       <GoogleConnect status={google} reload={loadGoogle} />
       <Simulator />
+    </div>
+  );
+}
+
+// Business profile — name + the owner's personal WhatsApp number. The owner
+// number is what the receipts pipeline recognizes: a photo sent FROM it to the
+// business number lands in the expense book instead of the customer inbox.
+function BusinessProfile() {
+  const [name, setName] = useState('');
+  const [ownerPhone, setOwnerPhone] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    api.get('/api/settings/profile')
+      .then((r) => { setName(r.data.name || ''); setOwnerPhone(r.data.ownerPhone || ''); })
+      .catch(() => {});
+  }, []);
+
+  async function save(e) {
+    e.preventDefault();
+    setErr('');
+    setSaved(false);
+    setSaving(true);
+    try {
+      const r = await api.put('/api/settings/profile', { name: name.trim(), ownerPhone: ownerPhone.trim() });
+      setOwnerPhone(r.data.ownerPhone || '');
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (ex) {
+      setErr(ex.response?.data?.error || 'השמירה נכשלה');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="card mt-4">
+      <h3 className="font-semibold mb-1">פרטי העסק</h3>
+      <p className="text-xs text-slate-400 mb-4">
+        🧾 מהמספר האישי של בעל/ת העסק אפשר לצלם קבלות ישירות לוואטסאפ של העסק — הן ייקלטו אוטומטית בעמוד <b>הוצאות</b>.
+      </p>
+      <form onSubmit={save} className="grid sm:grid-cols-2 gap-3 items-end max-w-2xl">
+        <div>
+          <label className="label">שם העסק</label>
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} required />
+        </div>
+        <div>
+          <label className="label">הוואטסאפ האישי של בעל/ת העסק</label>
+          <input className="input" dir="ltr" value={ownerPhone} onChange={(e) => setOwnerPhone(e.target.value)} placeholder="050-1234567" />
+        </div>
+        <div className="sm:col-span-2 flex items-center gap-3">
+          <button className="btn-primary" disabled={saving}>{saving ? 'שומר…' : 'שמירה'}</button>
+          {saved && <span className="text-sm text-green-600">✓ נשמר</span>}
+          {err && <span className="text-sm text-red-600">{err}</span>}
+        </div>
+      </form>
     </div>
   );
 }

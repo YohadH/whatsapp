@@ -104,6 +104,13 @@ model Tenant {
   // Nullable/additive (MIGRATION 10_tenant_integrations) — code treats null as {}.
   integrations Json?
 
+  // ── Owner's personal WhatsApp number ──
+  // Digits-only international format (e.g. 972501234567). Used to recognize the
+  // OWNER in the inbound webhook: an image the owner sends to their own business
+  // number is treated as a RECEIPT (services/receipts.js), not a customer message.
+  // Nullable/additive — when unset, falls back to HANDOFF_NOTIFY_PHONE.
+  ownerPhone String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -124,8 +131,37 @@ model Tenant {
   creditPurchases   CreditPurchase[]
   googleOAuthStates GoogleOAuthState[]
   metaCostEntries   MetaCostEntry[]
+  expenses          Expense[]
 
   @@index([status])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Receipt/expense captured from a photo the OWNER sends to their own business
+// WhatsApp number. The image is cached under uploads/receipts/<tenantId>/ and the
+// fields are extracted by the vision model (services/receipts.js). Money is
+// Decimal — never Float. status: parsed | needs_review (extraction incomplete).
+model Expense {
+  id          String    @id @default(cuid())
+  tenantId    String
+  messageWaId String? // inbound wa message id — idempotency for webhook retries
+  mediaId     String? // Meta media id of the receipt image
+  imagePath   String? // cached copy, relative to uploads/ (served by /api/expenses/:id/image)
+  vendor      String?
+  total       Decimal?  @db.Decimal(12, 2)
+  currency    String    @default("ILS")
+  vatAmount   Decimal?  @db.Decimal(12, 2)
+  expenseDate DateTime?
+  category    String?
+  summary     String?
+  status      String    @default("parsed")
+  createdAt   DateTime  @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, messageWaId])
+  @@index([tenantId, expenseDate])
+  @@index([tenantId, createdAt])
 }
 
 // ─────────────────────────────────────────────────────────────

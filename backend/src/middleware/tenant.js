@@ -44,6 +44,7 @@ export const TENANT_SELECT = {
   periodStartedAt: true,
   lowCreditNotifiedAt: true,
   integrations: true, // owner-toggled connections map (read in routes/settings.js)
+  ownerPhone: true, // owner-recognition for the receipts pipeline (services/receipts.js)
 };
 
 // Resolve the active tenant for a request and attach `req.tenant` / `req.tenantId`.

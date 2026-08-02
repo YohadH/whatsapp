@@ -298,6 +298,9 @@ export async function handleIncomingMessage({ tenant, phone, text, name, rawPayl
   // out of credits we force the rule-based path and flag it (graceful degrade).
   let agentResponse;
   let outOfCredits = false;
+  // Which engine produced the visible reply text — persisted on the Message so the
+  // inbox can label it honestly: 'ai' (real LLM text) vs 'flow'/'rules' (bot).
+  let replyVia = 'flow';
   if (conversation.currentFlowId) {
     // Mid-flow → record answer + advance, deterministically.
     agentResponse = ruleBasedResponse(ctx);
@@ -341,10 +344,12 @@ export async function handleIncomingMessage({ tenant, phone, text, name, rawPayl
       (llm.next_action === 'ask_next_question' || llm.intent === 'predefined_flow_start');
     if (wantsToStart) {
       // LLM detected the customer wants a flow → start it deterministically.
+      // The VISIBLE text is the deterministic flow question, so it tags as bot.
       ctx.state.startFlowId = llm.flow_id;
       agentResponse = ruleBasedResponse(ctx);
     } else {
       agentResponse = llm; // pure knowledge-base answer / chit-chat
+      replyVia = ai.used ? 'ai' : 'rules';
     }
   }
 
@@ -493,6 +498,9 @@ export async function handleIncomingMessage({ tenant, phone, text, name, rawPayl
         senderType: 'agent',
         messageText: replyText,
         intent: agentResponse.intent,
+        // Honest sender tag for the inbox (no `type` key, so the media-card
+        // detection in the frontend keeps ignoring this payload).
+        rawPayload: { via: replyVia },
       },
     });
     await trackEvent(EVENTS.MESSAGE_SENT, {

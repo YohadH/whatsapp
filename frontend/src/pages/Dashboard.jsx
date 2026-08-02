@@ -10,6 +10,8 @@ export default function Dashboard() {
   const [series, setSeries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // WhatsApp not connected yet → nudge into the onboarding wizard.
+  const [waConnected, setWaConnected] = useState(true);
 
   function load() {
     setLoading(true);
@@ -21,6 +23,7 @@ export default function Dashboard() {
       })
       .catch((err) => setError(errMsg(err)))
       .finally(() => setLoading(false));
+    api.get('/api/settings/whatsapp').then((r) => setWaConnected(Boolean(r.data.connected))).catch(() => {});
   }
 
   useEffect(() => { load(); }, []);
@@ -34,6 +37,15 @@ export default function Dashboard() {
   return (
     <div>
       <PageHeader title="דאשבורד" subtitle="סקירה כללית של פעילות הסוכן" />
+
+      {!waConnected && (
+        <div className="mb-4 rounded-2xl border border-brand-200 bg-brand-50 p-4 flex items-center justify-between gap-3 flex-wrap">
+          <div className="text-sm text-brand-800">
+            <b>עוד לא חיברתם את WhatsApp.</b> שלושה צעדים קצרים והסוכן מתחיל לענות ללקוחות.
+          </div>
+          <Link to="/onboarding" className="btn-primary text-sm whitespace-nowrap">להשלמת ההקמה ←</Link>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
         <StatCard label="סה״כ שיחות" value={o.totalConversations} />
@@ -53,16 +65,16 @@ export default function Dashboard() {
             <AreaChart data={series}>
               <defs>
                 <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#10b981" stopOpacity={0.4} />
-                  <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                  <stop offset="5%" stopColor="#0054FC" stopOpacity={0.35} />
+                  <stop offset="95%" stopColor="#0054FC" stopOpacity={0} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
               <XAxis dataKey="date" tick={{ fontSize: 11 }} />
               <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
               <Tooltip />
-              <Area type="monotone" dataKey="conversations" name="שיחות" stroke="#10b981" fill="url(#g)" />
-              <Area type="monotone" dataKey="leads" name="לידים" stroke="#6366f1" fillOpacity={0} />
+              <Area type="monotone" dataKey="conversations" name="שיחות" stroke="#0054FC" fill="url(#g)" />
+              <Area type="monotone" dataKey="leads" name="לידים" stroke="#EE03FD" fillOpacity={0} />
             </AreaChart>
           </ResponsiveContainer>
         </div>

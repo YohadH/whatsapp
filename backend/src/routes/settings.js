@@ -34,6 +34,41 @@ router.get(
   })
 );
 
+// ── Business profile (onboarding step 1) ─────────────────────────────────────
+// GET/PUT the tenant's own display name. Deliberately name-only: plan, caps and
+// entitlements stay super-admin-governed in routes/admin.js.
+router.get(
+  '/profile',
+  asyncHandler(async (req, res) => {
+    // req.tenant comes from TENANT_SELECT (no name); read the two fields directly.
+    const t = await prisma.tenant.findUnique({
+      where: { id: req.tenantId },
+      select: { name: true, ownerPhone: true },
+    });
+    res.json({ name: t?.name || '', ownerPhone: t?.ownerPhone || '' });
+  })
+);
+
+router.put(
+  '/profile',
+  asyncHandler(async (req, res) => {
+    const name = String(req.body?.name || '').trim();
+    if (!name) return res.status(400).json({ error: 'שם העסק לא יכול להיות ריק' });
+    if (name.length > 80) return res.status(400).json({ error: 'שם העסק ארוך מדי (עד 80 תווים)' });
+    const data = { name };
+    // ownerPhone (optional): digits-only international-ish; empty clears it.
+    if ('ownerPhone' in (req.body || {})) {
+      const digits = String(req.body.ownerPhone || '').replace(/\D/g, '');
+      if (digits && (digits.length < 9 || digits.length > 15)) {
+        return res.status(400).json({ error: 'מספר הטלפון של בעל/ת העסק לא תקין' });
+      }
+      data.ownerPhone = digits || null;
+    }
+    const t = await prisma.tenant.update({ where: { id: req.tenantId }, data });
+    res.json({ name: t.name, ownerPhone: t.ownerPhone || '' });
+  })
+);
+
 // ── Connect by phone number (no Embedded Signup) ─────────────────────────────
 // The customer types their number + a display name; we register it under the
 // PLATFORM's WABA and Meta texts them a code, which they enter to finish.

@@ -9,6 +9,7 @@ import { parseIncomingMessage, parseStatusEvents } from '../services/whatsapp.js
 import { handleIncomingMessage } from '../services/conversationEngine.js';
 import { handleOptOut } from '../services/optOut.js';
 import { recordMetaCostFromStatuses } from '../services/metaCost.js';
+import { isOwnerPhone, processReceiptImage } from '../services/receipts.js';
 
 const router = Router();
 
@@ -143,6 +144,12 @@ router.post(
     if (tenant.status === 'suspended') return;
 
     try {
+      // Receipts-by-WhatsApp: an IMAGE from the OWNER's own phone is a receipt,
+      // not a customer conversation — extract + book it instead of waking the agent.
+      if (parsed.media?.kind === 'image' && isOwnerPhone(tenant, parsed.phone)) {
+        await processReceiptImage({ tenant, parsed });
+        return;
+      }
       // "הסר" / "stop" → suppression list; don't hand it to the agent.
       if (await handleOptOut(tenant, parsed.phone, parsed.text)) return;
       await handleIncomingMessage({

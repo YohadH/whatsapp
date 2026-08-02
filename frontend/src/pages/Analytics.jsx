@@ -8,10 +8,11 @@ import { PageHeader } from '../components/Layout.jsx';
 import { Spinner, ErrorState, errMsg, INTENT_LABELS } from '../components/ui.jsx';
 import { buildAnalyticsCsv, downloadCsv, analyticsFilename } from '../lib/csv.js';
 
-// Cohesive palette — brand green primary, with intentional accent roles.
+// Cohesive palette — the HeyIL logo ramp (royal blue → violet → magenta) as the
+// series colors, with amber/red kept for their semantic warning/error roles.
 const C = {
-  green: '#10b981',
-  indigo: '#6366f1',
+  brand: '#0054FC',
+  violet: '#8504FD',
   amber: '#f59e0b',
   red: '#ef4444',
   slate: '#94a3b8',
@@ -19,7 +20,7 @@ const C = {
   grid: '#eef2f7',
   axis: '#94a3b8',
 };
-const PIE = [C.green, C.indigo, C.amber, C.red, '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6'];
+const PIE = [C.brand, C.violet, '#EE03FD', C.amber, '#3E7BFF', '#A94CFE', '#EE5EFD', C.red];
 
 const nf = (n) => Number(n || 0).toLocaleString('he-IL');
 const fmtTime = (s) => (s >= 60 ? `${Math.round(s / 60)} ד׳` : `${Math.round(s || 0)} ש׳`);
@@ -146,24 +147,24 @@ export default function Analytics() {
           <AreaChart data={d.conv.series} margin={{ top: 6, right: 8, left: -12, bottom: 0 }}>
             <defs>
               <linearGradient id="gConv" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={C.green} stopOpacity={0.35} />
-                <stop offset="100%" stopColor={C.green} stopOpacity={0} />
+                <stop offset="0%" stopColor={C.brand} stopOpacity={0.35} />
+                <stop offset="100%" stopColor={C.brand} stopOpacity={0} />
               </linearGradient>
               <linearGradient id="gLead" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={C.indigo} stopOpacity={0.25} />
-                <stop offset="100%" stopColor={C.indigo} stopOpacity={0} />
+                <stop offset="0%" stopColor={C.violet} stopOpacity={0.25} />
+                <stop offset="100%" stopColor={C.violet} stopOpacity={0} />
               </linearGradient>
             </defs>
             <CartesianGrid vertical={false} stroke={C.grid} />
             <XAxis dataKey="date" {...axis} minTickGap={24} />
             <YAxis allowDecimals={false} {...axis} width={34} />
             <Tooltip content={<ChartTip />} cursor={{ stroke: C.slate, strokeDasharray: '4 4' }} />
-            <Area type="monotone" dataKey="conversations" name="שיחות" stroke={C.green} strokeWidth={2.5} fill="url(#gConv)" />
-            <Area type="monotone" dataKey="leads" name="לידים" stroke={C.indigo} strokeWidth={2} fill="url(#gLead)" />
+            <Area type="monotone" dataKey="conversations" name="שיחות" stroke={C.brand} strokeWidth={2.5} fill="url(#gConv)" />
+            <Area type="monotone" dataKey="leads" name="לידים" stroke={C.violet} strokeWidth={2} fill="url(#gLead)" />
             <Area type="monotone" dataKey="newCustomers" name="לקוחות חדשים" stroke={C.amber} strokeWidth={2} fill="none" strokeDasharray="4 3" />
           </AreaChart>
         </ResponsiveContainer>
-        <Legend items={[['שיחות', C.green], ['לידים', C.indigo], ['לקוחות חדשים', C.amber]]} />
+        <Legend items={[['שיחות', C.brand], ['לידים', C.violet], ['לקוחות חדשים', C.amber]]} />
       </Card>
 
       {/* Supporting grid */}
@@ -196,12 +197,12 @@ export default function Analytics() {
                   <XAxis dataKey="name" {...axis} />
                   <YAxis allowDecimals={false} {...axis} width={34} />
                   <Tooltip content={<ChartTip />} cursor={{ fill: 'rgba(148,163,184,0.08)' }} />
-                  <Bar dataKey="started" name="התחילו" fill={C.indigo} radius={[5, 5, 0, 0]} maxBarSize={26} />
-                  <Bar dataKey="completed" name="הושלמו" fill={C.green} radius={[5, 5, 0, 0]} maxBarSize={26} />
+                  <Bar dataKey="started" name="התחילו" fill={C.violet} radius={[5, 5, 0, 0]} maxBarSize={26} />
+                  <Bar dataKey="completed" name="הושלמו" fill={C.brand} radius={[5, 5, 0, 0]} maxBarSize={26} />
                   <Bar dataKey="abandoned" name="ננטשו" fill={C.red} radius={[5, 5, 0, 0]} maxBarSize={26} />
                 </BarChart>
               </ResponsiveContainer>
-              <Legend items={[['התחילו', C.indigo], ['הושלמו', C.green], ['ננטשו', C.red]]} />
+              <Legend items={[['התחילו', C.violet], ['הושלמו', C.brand], ['ננטשו', C.red]]} />
               {d.flows.bestConverting && (
                 <p className="text-sm text-slate-500 mt-3 border-t border-slate-100 pt-3">
                   הכי ממיר: <b className="text-emerald-600">{d.flows.bestConverting.name}</b> ({d.flows.bestConverting.conversionRate}%)
@@ -225,7 +226,7 @@ export default function Analytics() {
                 <YAxis type="category" dataKey="name" width={120} {...axis} />
                 <Tooltip content={<ChartTip />} cursor={{ fill: 'rgba(148,163,184,0.08)' }} />
                 <Bar dataKey="sent" name="נשלחו" fill={C.slate} radius={[0, 5, 5, 0]} maxBarSize={16} />
-                <Bar dataKey="clicks" name="קליקים" fill={C.green} radius={[0, 5, 5, 0]} maxBarSize={16} />
+                <Bar dataKey="clicks" name="קליקים" fill={C.brand} radius={[0, 5, 5, 0]} maxBarSize={16} />
               </BarChart>
             </ResponsiveContainer>
           ) : (
@@ -269,11 +270,11 @@ export default function Analytics() {
                   <XAxis dataKey="question" {...axis} interval={0} angle={-15} textAnchor="end" height={70} />
                   <YAxis allowDecimals={false} {...axis} width={34} />
                   <Tooltip content={<ChartTip />} cursor={{ fill: 'rgba(148,163,184,0.08)' }} />
-                  <Bar dataKey="asked" name="נשאלו" fill={C.indigo} radius={[5, 5, 0, 0]} maxBarSize={30} />
-                  <Bar dataKey="answered" name="ענו" fill={C.green} radius={[5, 5, 0, 0]} maxBarSize={30} />
+                  <Bar dataKey="asked" name="נשאלו" fill={C.violet} radius={[5, 5, 0, 0]} maxBarSize={30} />
+                  <Bar dataKey="answered" name="ענו" fill={C.brand} radius={[5, 5, 0, 0]} maxBarSize={30} />
                 </BarChart>
               </ResponsiveContainer>
-              <Legend items={[['נשאלו', C.indigo], ['ענו', C.green]]} />
+              <Legend items={[['נשאלו', C.violet], ['ענו', C.brand]]} />
             </>
           ) : (
             <Empty />

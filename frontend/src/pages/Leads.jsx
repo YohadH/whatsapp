@@ -221,7 +221,7 @@ export default function Leads() {
   return (
     <div>
       <PageHeader
-        title="צינור לידים"
+        title="מנהל לידים"
         subtitle={`${items.length} לידים לפי שלב · גררו כרטיס (במחשב) או השתמשו ב"העבר" כדי לשנות שלב`}
         actions={<Link to="/conversations" className="btn-ghost">תצוגת רשימה ←</Link>}
       />

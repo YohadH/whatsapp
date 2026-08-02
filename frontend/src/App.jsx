@@ -16,16 +16,20 @@ import Broadcast from './pages/Broadcast.jsx';
 import Credits from './pages/Credits.jsx';
 import Settings from './pages/Settings.jsx';
 import Tenants from './pages/Tenants.jsx';
+import Onboarding from './pages/Onboarding.jsx';
+import Expenses from './pages/Expenses.jsx';
 
 // Protected route. `tenantScoped` pages need an active tenant: a super-admin who
 // hasn't selected a business is sent to /tenants (avoids tenant-less API 400s).
-function Protected({ children, tenantScoped = true, superAdminOnly = false }) {
+// `bare` renders without the Layout shell (full-screen flows like onboarding).
+function Protected({ children, tenantScoped = true, superAdminOnly = false, bare = false }) {
   const { user, loading, isSuperAdmin, activeTenantId } = useAuth();
   if (loading) return <Spinner className="h-screen" />;
   if (!user) return <Navigate to="/login" replace />;
   if (user.mustResetPassword) return <Navigate to="/reset-password" replace />;
   if (superAdminOnly && !isSuperAdmin) return <Navigate to="/dashboard" replace />;
   if (tenantScoped && isSuperAdmin && !activeTenantId) return <Navigate to="/tenants" replace />;
+  if (bare) return children;
   return <Layout>{children}</Layout>;
 }
 
@@ -36,6 +40,7 @@ export default function App() {
       <Route path="/login" element={<Login />} />
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/tenants" element={<Protected tenantScoped={false} superAdminOnly><Tenants /></Protected>} />
+      <Route path="/onboarding" element={<Protected bare><Onboarding /></Protected>} />
       <Route path="/dashboard" element={<Protected><Dashboard /></Protected>} />
       <Route path="/conversations" element={<Protected><Conversations /></Protected>} />
       <Route path="/conversations/:id" element={<Protected><ConversationDetail /></Protected>} />
@@ -47,6 +52,7 @@ export default function App() {
       <Route path="/links" element={<Navigate to="/content" replace />} />
       <Route path="/analytics" element={<Protected><Analytics /></Protected>} />
       <Route path="/broadcast" element={<Protected><Broadcast /></Protected>} />
+      <Route path="/expenses" element={<Protected><Expenses /></Protected>} />
       <Route path="/credits" element={<Protected><Credits /></Protected>} />
       <Route path="/settings" element={<Protected><Settings /></Protected>} />
       <Route path="*" element={<Navigate to="/dashboard" replace />} />

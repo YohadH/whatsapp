@@ -1,21 +1,16 @@
-// Renders the body of a single chat message bubble — a media affordance
-// (image / audio / voice / video / document / sticker / location card) for
-// inbound WhatsApp MEDIA messages, or plain text for everything else.
+import { useEffect, useState } from 'react';
+import api from '../api/client.js';
+
+// Renders the body of a single chat message bubble — the ACTUAL media (image /
+// audio / video inline, documents as a download) for inbound WhatsApp media
+// messages, or plain text for everything else.
 //
-// WHY THIS EXISTS: inbound WhatsApp media messages used to render as the literal
-// placeholder string "[image]" / "[audio]" / "[document]" in the inbox, so a
-// tenant admin could not tell what the customer actually sent. The backend now
-// preserves the media metadata (caption, filename, mime type, media id) on the
-// message's `rawPayload` (see backend services/whatsapp.js describeInboundMessage),
-// and messageText holds a clean caption/filename/typed-label fallback. This
-// component reads that metadata and shows a real media card.
-//
-// NOTE: WhatsApp Cloud API media is NOT a public URL — the actual bytes require a
-// server-side Graph API download (GET /{media-id} with the tenant token), which is
-// not built yet. Until that media-proxy exists we render a typed media card
-// (icon + label + caption + filename) — an honest, informative affordance rather
-// than a bare "[image]" string. When a proxy route lands, swap the <MediaCard>
-// icon for the real <img>/<audio>/<video>/download link keyed off `mediaId`.
+// Bytes come from the authenticated media proxy (GET /api/conversations/media/
+// :messageId — backend routes/conversations.js), which downloads via the Graph
+// API with the tenant token and caches to disk. A bare <img src> can't carry the
+// Authorization header, so media is fetched as a blob through the api client and
+// rendered from an object URL. While loading — and whenever the proxy fails
+// (simulator mode, expired media) — the typed MediaCard below stays the fallback.
 
 // Hebrew label per media kind (mirrors backend MEDIA_KIND_LABEL).
 const KIND_LABEL = {
@@ -97,10 +92,72 @@ function MediaCard({ media }) {
   );
 }
 
-// Body renderer for a message bubble. Renders a media card for inbound media
-// messages, otherwise the plain messageText.
+// Fetch a message's media bytes through the authenticated proxy → object URL.
+// (A plain <img src> can't send the Bearer token.) Cleans up the URL on unmount.
+function useMediaBlob(messageId, enabled) {
+  const [url, setUrl] = useState(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    if (!enabled || !messageId) return undefined;
+    let alive = true;
+    let obj = null;
+    api
+      .get(`/api/conversations/media/${messageId}`, { responseType: 'blob' })
+      .then((r) => {
+        if (!alive) return;
+        obj = URL.createObjectURL(r.data);
+        setUrl(obj);
+      })
+      .catch(() => { if (alive) setFailed(true); });
+    return () => {
+      alive = false;
+      if (obj) URL.revokeObjectURL(obj);
+    };
+  }, [messageId, enabled]);
+  return { url, failed };
+}
+
+// Kinds the proxy can render inline; everything else keeps the typed card.
+const RENDERABLE = new Set(['image', 'sticker', 'video', 'audio', 'voice', 'document']);
+
+function MediaView({ media, message }) {
+  const { kind, caption, filename } = media;
+  const { url, failed } = useMediaBlob(message.id, RENDERABLE.has(kind));
+
+  // Loading or proxy failure (simulator mode / expired media) → typed card.
+  if (!url || failed) return <MediaCard media={media} />;
+
+  let body = null;
+  if (kind === 'image' || kind === 'sticker') {
+    body = (
+      <a href={url} target="_blank" rel="noopener noreferrer" title="פתיחה בגודל מלא">
+        <img src={url} alt={caption || 'תמונה'} className="max-h-64 max-w-full rounded-lg object-contain" />
+      </a>
+    );
+  } else if (kind === 'video') {
+    body = <video src={url} controls className="max-h-64 max-w-full rounded-lg" />;
+  } else if (kind === 'audio' || kind === 'voice') {
+    body = <audio src={url} controls className="max-w-full" />;
+  } else if (kind === 'document') {
+    body = (
+      <a href={url} download={filename || 'document'} className="flex items-center gap-2 rounded-lg bg-black/5 px-2.5 py-2 hover:bg-black/10 transition">
+        <span className="shrink-0 grid place-items-center h-8 w-8 rounded-md bg-black/10 text-slate-700"><MediaIcon kind="document" /></span>
+        <span className="text-[13px] font-medium text-slate-800 truncate">{filename || 'הורדת מסמך'}</span>
+      </a>
+    );
+  }
+  return (
+    <div>
+      {body}
+      {caption && <div className="mt-1 whitespace-pre-wrap">{caption}</div>}
+    </div>
+  );
+}
+
+// Body renderer for a message bubble. Renders the real media (with a typed-card
+// fallback) for inbound media messages, otherwise the plain messageText.
 export default function MessageContent({ message }) {
   const media = mediaFromMessage(message);
-  if (media) return <MediaCard media={media} />;
+  if (media) return <MediaView media={media} message={message} />;
   return <span>{message.messageText}</span>;
 }
