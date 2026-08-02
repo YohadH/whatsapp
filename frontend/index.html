@@ -8,7 +8,7 @@
 <script>document.documentElement.className+=' js';</script>
 <title>סוכן וואטסאפ בעברית לעסקים — עונה, קובע תורים ושומר כל ליד | HeyIL</title>
 <meta name="description" content="הלקוחות כותבים בוואטסאפ גם באמצע היום העמוס וגם ב-22:00. סוכן וואטסאפ בעברית שעונה תוך שניות, קובע תורים ושומר כל פנייה — מהמחירים שלכם בלבד, על מערכת שכבר רצה. פיילוט שבועיים חינם.">
-<link rel="icon" type="image/png" href="/landing/assets/brand/logo-icon.png">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 
 <!-- ===== SEO / AEO ===== -->
 <link rel="canonical" href="https://heyil.co.il/">
@@ -457,28 +457,29 @@
      off-white base, mint→teal accent, generous radii, soft shadows.
      =================================================================== */
   :root{
-    --bg-void:#F3F7F7;      /* light page base */
+    --bg-void:#FAFAFA;      /* Paper — page base */
     --bg-deep:#FFFFFF;      /* alt section — white */
     --bg-panel:#FFFFFF;     /* card / panel surface */
-    --bg-panel-2:#EAF4F2;   /* soft teal wash — input / chip / elevated */
-    --line:rgba(18,58,60,.10);
-    --line-strong:rgba(18,58,60,.18);
+    --bg-panel-2:#F3F4F7;   /* light surface — input / chip / elevated */
+    --line:#E2E2E6;
+    --line-strong:#D4D4D8;
 
-    --sig-1:#23C7B2; --sig-2:#12A695; --sig-3:#0E8577; --sig-4:#0B6E68;
-    --grad-signature:linear-gradient(90deg,var(--sig-1) 0%,var(--sig-2) 48%,var(--sig-3) 100%);
-    --grad-signature-diag:linear-gradient(135deg,var(--sig-1) 0%,var(--sig-2) 55%,var(--sig-3) 100%);
+    /* solid accents = Signal blue; the gradient is decorative only (blue→violet→pink) */
+    --sig-1:#1A69F5; --sig-2:#4785FB; --sig-3:#1A69F5; --sig-4:#1257D6;
+    --grad-signature:linear-gradient(90deg,#1A69F5 0%,#7B5CF0 55%,#F7A8C8 100%);
+    --grad-signature-diag:linear-gradient(135deg,#1A69F5 0%,#7B5CF0 55%,#F7A8C8 100%);
 
-    --text-hi:#12363E;      /* dark-teal ink — headings */
-    --text-body:#4A616A;    /* body copy */
-    --text-muted:#7B8D92;
-    --text-invert:#FFFFFF;  /* text ON teal-filled buttons */
+    --text-hi:#1C1C1E;      /* Ink — headings */
+    --text-body:#48484A;    /* body copy */
+    --text-muted:#8E8E94;   /* secondary */
+    --text-invert:#FFFFFF;  /* text ON the blue-filled buttons */
 
-    --glow-green:0 12px 28px -12px rgba(18,166,149,.38);
-    --glow-cyan:0 12px 28px -12px rgba(18,166,149,.32);
-    --glow-blue:0 12px 28px -12px rgba(18,166,149,.30);
-    --glow-signature:0 12px 30px -10px rgba(18,166,149,.34);
-    --shadow-soft:0 1px 2px rgba(16,45,48,.05),0 14px 32px -16px rgba(16,45,48,.20);
-    --shadow-lift:0 2px 6px rgba(16,45,48,.06),0 28px 56px -20px rgba(14,110,106,.32);
+    --glow-green:0 12px 28px -12px rgba(26,105,245,.30);
+    --glow-cyan:0 12px 28px -12px rgba(26,105,245,.26);
+    --glow-blue:0 12px 28px -12px rgba(26,105,245,.28);
+    --glow-signature:0 12px 30px -10px rgba(26,105,245,.30);
+    --shadow-soft:0 1px 2px rgba(20,20,25,.05),0 14px 32px -16px rgba(20,20,25,.16);
+    --shadow-lift:0 2px 6px rgba(20,20,25,.06),0 28px 56px -20px rgba(26,105,245,.24);
 
     --r-sm:12px; --r-md:18px; --r-lg:26px;
   }
@@ -499,16 +500,14 @@
   .btn-ghost{border-color:var(--sig-3);color:var(--sig-3)}
   .btn-ghost.dark{border-color:var(--line-strong);color:var(--text-hi)}
 
-  /* LIGHT hero — soft teal wash, dark ink, subtle glow behind the brand */
+  /* LIGHT hero — Paper wash with soft blue + pink glows, Ink text */
   .hero{color:var(--text-hi);
     background:
-      radial-gradient(120% 82% at 86% 8%, rgba(35,199,178,.20), transparent 60%),
-      radial-gradient(88% 68% at 6% 98%, rgba(14,133,119,.14), transparent 58%),
-      linear-gradient(168deg,#F2FBF9 0%,#E7F3F1 100%)}
-  .hero::before{opacity:.025}
+      radial-gradient(120% 82% at 86% 8%, rgba(26,105,245,.13), transparent 60%),
+      radial-gradient(88% 68% at 6% 98%, rgba(247,168,200,.20), transparent 58%),
+      linear-gradient(168deg,#FFFFFF 0%,#F4F5F8 100%)}
+  .hero::before{opacity:.02}
   .hero h1,.hero .sub b{color:var(--text-hi)}
-  /* the brand raster is a bright gradient; a soft white halo keeps it crisp on light */
-  .hero-brand .logo-full{filter:drop-shadow(0 6px 18px rgba(16,45,48,.14))}
 
   /* section rhythm — alternate white / soft-teal washes; cards stay white */
   .decide-sec{background:var(--bg-panel-2);border-block:1px solid var(--line)}
@@ -530,32 +529,41 @@
   .cmp-table thead th{background:var(--bg-panel-2)}
   td.cmp-b{background:rgba(18,166,149,.06)}
 
-  /* dark-teal footer — a calm anchor; the transparent brand raster reads on it */
-  footer{background:#0F2F35;color:rgba(255,255,255,.66)}
+  /* Ink footer — a calm anchor */
+  footer{background:#1C1C1E;color:rgba(255,255,255,.66)}
   footer .built-il,footer .wrap div{color:rgba(255,255,255,.6)}
+
+  /* HeyIL wordmark (landing) — "Hey" in currentColor, "IL" blue, blue→pink swoosh */
+  .wm{position:relative;display:inline-flex;align-items:flex-end;font-family:"Rubik","Assistant",sans-serif;font-weight:800;line-height:1;letter-spacing:-.02em}
+  .wm-hey{position:relative;color:currentColor}
+  .wm-sw{position:absolute;left:-4%;bottom:-.15em;width:112%;height:.4em;overflow:visible;pointer-events:none}
+  .wm-il{color:#1A69F5;font-weight:700;font-size:.5em;margin-inline-start:.1em}
+  .topbar .wm{font-size:30px;color:var(--text-hi)}
+  .hero-brand .wm{font-size:clamp(46px,9vw,66px);color:var(--text-hi)}
+  footer .wm{font-size:34px;color:#fff;margin-block-end:14px}
 
   /* ===================================================================
      Added showcase sections (SmartSend-inspired rhythm — original build).
      =================================================================== */
 
   /* A · dark product-showcase band (contrast against the light sections) */
-  .showcase{background:linear-gradient(165deg,#0F2F35 0%,#123B44 55%,#0C2A30 100%);color:#EAF6F4;position:relative;overflow:hidden}
+  .showcase{background:linear-gradient(165deg,#1C1C1E 0%,#232327 55%,#161618 100%);color:#EDEDF0;position:relative;overflow:hidden}
   .showcase::before{content:"";position:absolute;inset:0;pointer-events:none;background:
-    radial-gradient(58% 50% at 80% 6%,rgba(35,199,178,.20),transparent 60%),
-    radial-gradient(50% 42% at 8% 100%,rgba(14,133,119,.22),transparent 60%)}
+    radial-gradient(58% 50% at 80% 6%,rgba(26,105,245,.24),transparent 60%),
+    radial-gradient(50% 42% at 8% 100%,rgba(247,168,200,.18),transparent 60%)}
   .showcase .wrap{position:relative;z-index:1;display:grid;grid-template-columns:.92fr 1.08fr;gap:clamp(30px,5vw,64px);align-items:center}
   .showcase .eyebrow{margin-block-end:14px}
   .showcase h2{color:#fff;margin-block-end:16px}
-  .showcase .sc-lead{color:#B9D6D2;font-size:clamp(16px,2vw,18px);margin-block-end:28px;max-width:520px}
+  .showcase .sc-lead{color:#C7C7CC;font-size:clamp(16px,2vw,18px);margin-block-end:28px;max-width:520px}
   .sc-feats{list-style:none;display:flex;flex-direction:column;gap:18px}
   .sc-feats li{display:flex;gap:13px;align-items:flex-start}
-  .sc-feats .ic{width:42px;height:42px;flex:none;border-radius:13px;background:rgba(35,199,178,.14);color:#37E0C6;
-    display:flex;align-items:center;justify-content:center;box-shadow:inset 0 0 0 1px rgba(55,224,198,.28)}
+  .sc-feats .ic{width:42px;height:42px;flex:none;border-radius:13px;background:rgba(26,105,245,.18);color:#7EA8FF;
+    display:flex;align-items:center;justify-content:center;box-shadow:inset 0 0 0 1px rgba(126,168,255,.30)}
   .sc-feats h3{font-size:16.5px;color:#fff;margin-block-end:3px}
-  .sc-feats p{color:#9FC2BE;font-size:14.5px;line-height:1.55}
+  .sc-feats p{color:#A9A9B0;font-size:14.5px;line-height:1.55}
   .sc-stage{position:relative;min-height:340px;display:flex;align-items:center;justify-content:center}
   .sc-glow{position:absolute;width:62%;height:46%;inset-block-start:4%;filter:blur(62px);pointer-events:none;
-    background:radial-gradient(circle,rgba(35,199,178,.5),transparent 70%);animation:scGlow 6s ease-in-out infinite}
+    background:radial-gradient(circle,rgba(26,105,245,.5),transparent 70%);animation:scGlow 6s ease-in-out infinite}
   .sc-browser{position:relative;width:100%;max-width:560px;border-radius:16px;overflow:hidden;background:#0b232a;
     border:1px solid rgba(255,255,255,.12);box-shadow:0 34px 74px -22px rgba(0,0,0,.62)}
   .sc-bar{display:flex;align-items:center;gap:7px;padding:11px 14px;background:rgba(255,255,255,.05);border-block-end:1px solid rgba(255,255,255,.08)}
@@ -565,7 +573,7 @@
   .sc-chip{position:absolute;background:rgba(255,255,255,.97);color:#12363E;border-radius:14px;padding:11px 14px;
     box-shadow:0 22px 46px -14px rgba(0,0,0,.5);font-size:13.5px;font-weight:600;display:flex;align-items:center;gap:9px;
     white-space:nowrap;animation:scFloat 5s ease-in-out infinite}
-  .sc-chip .dot{width:9px;height:9px;border-radius:50%;background:#22C55E;box-shadow:0 0 0 4px rgba(34,197,94,.18)}
+  .sc-chip .dot{width:9px;height:9px;border-radius:50%;background:#1A69F5;box-shadow:0 0 0 4px rgba(26,105,245,.18)}
   .sc-chip.one{inset-block-start:6%;inset-inline-start:-3%;animation-delay:.2s}
   .sc-chip.two{inset-block-end:9%;inset-inline-end:-2%;animation-delay:1.2s}
   @keyframes scFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
@@ -597,7 +605,7 @@
   .cta-inner>*{position:relative;z-index:1}
   .cta-inner h2{color:#fff;font-size:clamp(26px,4vw,42px);margin-block-end:12px}
   .cta-inner p{color:rgba(255,255,255,.92);font-size:clamp(16px,2vw,19px);max-width:580px;margin:0 auto 26px}
-  .cta-inner .btn{background:#fff;color:#0E7A6F}
+  .cta-inner .btn{background:#fff;color:#1257D6}
   .cta-inner .btn:hover{transform:translateY(-2px);filter:none;box-shadow:0 18px 40px -12px rgba(0,0,0,.42)}
   .cta-trust{margin-block-start:20px;color:rgba(255,255,255,.85);font-size:13.5px;display:flex;gap:16px;justify-content:center;flex-wrap:wrap}
   .cta-trust span{display:inline-flex;align-items:center;gap:6px}
@@ -657,7 +665,7 @@
 <div class="topbar" id="topbar">
   <div class="wrap">
     <div class="wordmark">
-      <img class="logo-full" src="/landing/assets/brand/logo-transparent.png" alt="HeyIL — סוכן וואטסאפ בעברית לעסקים">
+      <span class="wm" dir="ltr" aria-label="HeyIL"><span class="wm-hey">Hey<svg class="wm-sw" viewBox="0 0 100 14" preserveAspectRatio="none" fill="none"><defs><linearGradient id="wmT" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#1A69F5"/><stop offset=".55" stop-color="#7B5CF0"/><stop offset="1" stop-color="#F7A8C8"/></linearGradient></defs><path d="M2 8C28 15 62 13 90 4c4-1.3 7-3 8-3.5" stroke="url(#wmT)" stroke-width="3" stroke-linecap="round"/></svg></span><span class="wm-il">IL</span></span>
     </div>
   </div>
 </div>
@@ -695,7 +703,7 @@
   <div class="wrap hero-inner">
     <div>
       <div class="hero-brand rise" style="animation-delay:.05s">
-        <img class="logo-full" src="/landing/assets/brand/logo-transparent.png" alt="HeyIL">
+        <span class="wm" dir="ltr" aria-label="HeyIL"><span class="wm-hey">Hey<svg class="wm-sw" viewBox="0 0 100 14" preserveAspectRatio="none" fill="none"><defs><linearGradient id="wmH" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#1A69F5"/><stop offset=".55" stop-color="#7B5CF0"/><stop offset="1" stop-color="#F7A8C8"/></linearGradient></defs><path d="M2 8C28 15 62 13 90 4c4-1.3 7-3 8-3.5" stroke="url(#wmH)" stroke-width="3" stroke-linecap="round"/></svg></span><span class="wm-il">IL</span></span>
       </div>
       <h1 class="rise" style="animation-delay:.12s">מערכת ניהול וואטסאפ לעסקים<br><span class="hl">עם סוכן שמכיר את העסק שלכם על בוריו</span></h1>
       <div class="sub rise" style="animation-delay:.19s">
@@ -894,7 +902,7 @@
       </div>
       <div class="wire"><svg preserveAspectRatio="none" viewBox="0 0 100 12"><path d="M0 6 H100"/></svg></div>
       <div class="node center">
-        <div class="badge-ic"><img src="/landing/assets/brand/logo-icon.png" alt="HeyIL"></div>
+        <div class="badge-ic"><span style="color:#fff;font-family:'Rubik',sans-serif;font-weight:800;font-size:2.1em;line-height:1">H</span></div>
         <div class="lbl">HeyIL · API רשמי</div>
       </div>
       <div class="wire"><svg preserveAspectRatio="none" viewBox="0 0 100 12"><path d="M0 6 H100"/></svg></div>
@@ -1066,7 +1074,7 @@
     </g>
   </svg>
   <div class="wrap">
-    <img class="foot-logo" src="/landing/assets/brand/logo-transparent.png" alt="HeyIL — סוכן וואטסאפ בעברית לעסקים" loading="lazy">
+    <span class="wm" dir="ltr" aria-label="HeyIL"><span class="wm-hey">Hey<svg class="wm-sw" viewBox="0 0 100 14" preserveAspectRatio="none" fill="none"><defs><linearGradient id="wmF" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#4785FB"/><stop offset=".55" stop-color="#9B84F4"/><stop offset="1" stop-color="#F7A8C8"/></linearGradient></defs><path d="M2 8C28 15 62 13 90 4c4-1.3 7-3 8-3.5" stroke="url(#wmF)" stroke-width="3" stroke-linecap="round"/></svg></span><span class="wm-il">IL</span></span>
     <div class="built-il">🇮🇱 נבנה בישראל</div>
     <div>HeyIL · שירות ישראלי · יוהד חכים · וואטסאפ: 054-553-2316</div>
   </div>
@@ -1074,7 +1082,7 @@
 
 <!-- floating WhatsApp CTA (channel-native contact) -->
 <a class="wa-float" id="wafloat" target="_blank" rel="noopener" href="https://wa.me/972545532316?text=%D7%94%D7%99%D7%99!%20%D7%A8%D7%90%D7%99%D7%AA%D7%99%20%D7%90%D7%AA%20%D7%94%D7%A2%D7%9E%D7%95%D7%93%20%D7%95%D7%90%D7%A9%D7%9E%D7%97%20%D7%9C%D7%A8%D7%90%D7%95%D7%AA%20%D7%90%D7%99%D7%9A%20%D7%94%D7%A1%D7%95%D7%9B%D7%9F%20%D7%A2%D7%95%D7%91%D7%93%20%D7%A2%D7%9C%20%D7%94%D7%A2%D7%A1%D7%A7%20%D7%A9%D7%9C%D7%99." aria-label="שלחו לנו הודעה בוואטסאפ">
-  <span class="wa-float-logo" aria-hidden="true"><img src="/landing/assets/brand/logo-icon.png" alt=""></span>
+  <span class="wa-float-logo" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></span>
   דברו איתנו בוואטסאפ
 </a>
 

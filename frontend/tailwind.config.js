@@ -4,43 +4,44 @@ export default {
   theme: {
     extend: {
       colors: {
-        // HeyIL brand — primary green (left of the logo).
+        // HeyIL brand — Signal blue (#1A69F5): primary action + links.
         brand: {
-          50: '#ecfdf5',
-          100: '#d1fae5',
-          200: '#a7f3d0',
-          300: '#6ee7b7',
-          400: '#34d399',
-          500: '#10b981',
-          600: '#059669',
-          700: '#047857',
-          800: '#065f46',
-          900: '#064e3b',
+          50: '#eef4ff',
+          100: '#d9e6ff',
+          200: '#b3cdff',
+          300: '#7ea8ff',
+          400: '#4785fb',
+          500: '#1A69F5',
+          600: '#1257d6',
+          700: '#0f47ad',
+          800: '#123c8a',
+          900: '#14356e',
         },
-        // HeyIL accent — blue (right of the logo).
+        // HeyIL accent — Warm pink (#F7A8C8): used sparingly for highlights.
         accent: {
-          50: '#eff6ff',
-          100: '#dbeafe',
-          200: '#bfdbfe',
-          300: '#93c5fd',
-          400: '#60a5fa',
-          500: '#3b82f6',
-          600: '#2563eb',
-          700: '#1d4ed8',
+          50: '#fef1f6',
+          100: '#fde4ee',
+          200: '#fbc9dd',
+          300: '#F7A8C8',
+          400: '#f286b0',
+          500: '#e85f93',
+          600: '#d13f76',
+          700: '#ad2f5e',
         },
-        // Dark shell base (the logo's black canvas).
+        // Ink (#1C1C1E): text, "Hey", dark shell.
         ink: {
-          800: '#0f1b2d',
-          900: '#0a1420',
-          950: '#060d16',
+          800: '#2a2a2e',
+          900: '#1C1C1E',
+          950: '#121214',
         },
       },
       backgroundImage: {
-        // The signature HeyIL gradient: green → teal → blue (matches the logo wordmark).
-        heyil: 'linear-gradient(120deg, #10b981 0%, #14b8a6 48%, #2563eb 100%)',
-        'heyil-soft': 'linear-gradient(120deg, #10b981 0%, #2563eb 100%)',
-        // Dark sidebar: near-black with a faint green→blue wash.
-        'heyil-dark': 'linear-gradient(165deg, #0a1420 0%, #08211c 55%, #06243a 100%)',
+        // Signature gradient: Signal blue → violet → Warm pink. Decorative only
+        // (separators, wordmark) — never as text on a colored button.
+        heyil: 'linear-gradient(120deg, #1A69F5 0%, #7B5CF0 50%, #F7A8C8 100%)',
+        'heyil-soft': 'linear-gradient(120deg, #1A69F5 0%, #F7A8C8 100%)',
+        // Dark shell (sidebar/login): Ink with a faint blue wash.
+        'heyil-dark': 'linear-gradient(165deg, #1C1C1E 0%, #17171b 55%, #141d33 100%)',
       },
       fontFamily: {
         sans: ['Heebo', 'Segoe UI', 'system-ui', '-apple-system', 'sans-serif'],

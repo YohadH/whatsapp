@@ -44,8 +44,9 @@ export default function Login() {
     <div className="min-h-screen flex items-center justify-center bg-heyil-dark p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8">
         <div className="text-center mb-7">
-          <Logo className="mx-auto h-16 w-16 drop-shadow-lg mb-3" gid="login" />
-          <h1 className="text-3xl font-extrabold tracking-tight text-heyil">HeyIL</h1>
+          <div className="flex justify-center mb-3">
+            <Logo className="text-4xl text-ink-900" gid="login" />
+          </div>
           <p className="text-sm text-slate-500 mt-1">כניסת מנהל/ת</p>
         </div>
         <form onSubmit={submit} className="space-y-4">

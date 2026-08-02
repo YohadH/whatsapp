@@ -1,20 +1,11 @@
-<svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="g" x1="10" y1="6" x2="56" y2="58" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#34d399"/>
-      <stop offset="0.5" stop-color="#06b6d4"/>
-      <stop offset="1" stop-color="#2563eb"/>
+    <linearGradient id="s" x1="12" y1="48" x2="52" y2="40" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1A69F5"/>
+      <stop offset="1" stop-color="#F7A8C8"/>
     </linearGradient>
   </defs>
-  <circle cx="15" cy="9" r="4" fill="url(#g)"/>
-  <circle cx="8" cy="14" r="2.4" fill="url(#g)"/>
-  <rect x="12" y="8" width="46" height="37" rx="11" fill="url(#g)"/>
-  <path d="M23 43 L20 55 L34 43 Z" fill="url(#g)"/>
-  <g fill="#ffffff">
-    <rect x="23.5" y="16" width="5.5" height="19" rx="2.75"/>
-    <rect x="41" y="16" width="5.5" height="19" rx="2.75"/>
-    <rect x="25.5" y="22.75" width="19" height="5.5" rx="2.75"/>
-    <circle cx="30.5" cy="39.5" r="2.1"/>
-    <circle cx="39.5" cy="39.5" r="2.1"/>
-  </g>
+  <rect width="64" height="64" rx="15" fill="#1C1C1E"/>
+  <text x="31" y="41" text-anchor="middle" font-family="Heebo, 'Segoe UI', sans-serif" font-weight="800" font-size="33" fill="#ffffff">H</text>
+  <path d="M13 45C26 51 40 49 51 41" stroke="url(#s)" stroke-width="4.2" stroke-linecap="round" fill="none"/>
 </svg>

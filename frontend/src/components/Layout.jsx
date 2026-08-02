@@ -44,13 +44,8 @@ export default function Layout({ children }) {
           ${drawerOpen ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'}`}
       >
         <div className="px-5 py-5 border-b border-white/10">
-          <div className="flex items-center gap-3">
-            <Logo className="h-10 w-10 drop-shadow-lg" gid="sidebar" />
-            <div>
-              <div className="text-2xl font-extrabold leading-none tracking-tight text-heyil">HeyIL</div>
-              <div className="text-[11px] text-white/40 mt-1">{isSuperAdmin ? 'קונסולת פלטפורמה' : 'סוכן WhatsApp חכם'}</div>
-            </div>
-          </div>
+          <Logo className="text-[26px] text-white" gid="sidebar" />
+          <div className="text-[11px] text-white/40 mt-2">{isSuperAdmin ? 'קונסולת פלטפורמה' : 'סוכן WhatsApp חכם'}</div>
         </div>
         <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
           {isSuperAdmin && (
@@ -85,10 +80,7 @@ export default function Layout({ children }) {
       <main className="flex-1 overflow-y-auto min-w-0">
         {/* Mobile top bar — HeyIL logo + hamburger (hidden on desktop). */}
         <div className="lg:hidden sticky top-0 z-20 flex items-center justify-between bg-heyil-dark text-white px-4 py-3 shadow-md">
-          <div className="flex items-center gap-2">
-            <Logo className="h-8 w-8" gid="mobile" />
-            <span className="text-lg font-extrabold tracking-tight text-heyil">HeyIL</span>
-          </div>
+          <Logo className="text-xl text-white" gid="mobile" />
           <button onClick={() => setDrawerOpen(true)} className="p-2 -mr-2 rounded-lg hover:bg-white/10 transition" aria-label="תפריט">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <path d="M4 6h16M4 12h16M4 18h16" />

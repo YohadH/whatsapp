@@ -1,30 +1,35 @@
-// HeyIL mark — a chat-bubble "H" robot face in the brand green→cyan→blue gradient.
-// Vector so it stays crisp at any size (sidebar, login, favicon). `gid` makes the
-// gradient id unique when several logos render on one page.
-export default function Logo({ className = 'h-10 w-10', gid = 'heyil' }) {
+// HeyIL wordmark — real HTML text so it always renders with the loaded font.
+// "Hey" inherits currentColor (white on the dark shell, Ink on light), "IL" in
+// Signal blue, with the blue→pink signature swoosh under "Hey". Size it by passing
+// a text-size class (e.g. text-2xl) plus a color class. `dir="ltr"` keeps Latin
+// order correct inside the RTL app.
+export default function Logo({ className = 'text-2xl', gid = 'heyil' }) {
   return (
-    <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" className={className} role="img" aria-label="HeyIL">
-      <defs>
-        <linearGradient id={gid} x1="10" y1="6" x2="56" y2="58" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#34d399" />
-          <stop offset="0.5" stopColor="#06b6d4" />
-          <stop offset="1" stopColor="#2563eb" />
-        </linearGradient>
-      </defs>
-      {/* accent bubbles (top-left) */}
-      <circle cx="15" cy="9" r="4" fill={`url(#${gid})`} />
-      <circle cx="8" cy="14" r="2.4" fill={`url(#${gid})`} />
-      {/* speech bubble + tail */}
-      <rect x="12" y="8" width="46" height="37" rx="11" fill={`url(#${gid})`} />
-      <path d="M23 43 L20 55 L34 43 Z" fill={`url(#${gid})`} />
-      {/* robot "H" face */}
-      <g fill="#ffffff">
-        <rect x="23.5" y="16" width="5.5" height="19" rx="2.75" />
-        <rect x="41" y="16" width="5.5" height="19" rx="2.75" />
-        <rect x="25.5" y="22.75" width="19" height="5.5" rx="2.75" />
-        <circle cx="30.5" cy="39.5" r="2.1" />
-        <circle cx="39.5" cy="39.5" r="2.1" />
-      </g>
-    </svg>
+    <span
+      dir="ltr"
+      aria-label="HeyIL"
+      className={`relative inline-flex items-end font-extrabold leading-none tracking-tight ${className}`}
+    >
+      <span className="relative">
+        Hey
+        <svg
+          className="absolute pointer-events-none"
+          style={{ left: '-4%', bottom: '-0.16em', width: '112%', height: '0.42em', overflow: 'visible' }}
+          viewBox="0 0 100 14"
+          preserveAspectRatio="none"
+          fill="none"
+        >
+          <defs>
+            <linearGradient id={`sw-${gid}`} x1="0" y1="13" x2="100" y2="1" gradientUnits="userSpaceOnUse">
+              <stop stopColor="#1A69F5" />
+              <stop offset="0.55" stopColor="#7B5CF0" />
+              <stop offset="1" stopColor="#F7A8C8" />
+            </linearGradient>
+          </defs>
+          <path d="M2 8C28 15 62 13 90 4c4-1.3 7-3 8-3.5" stroke={`url(#sw-${gid})`} strokeWidth="3" strokeLinecap="round" />
+        </svg>
+      </span>
+      <span className="text-brand-500 font-bold ms-[0.12em]" style={{ fontSize: '0.52em' }}>IL</span>
+    </span>
   );
 }
