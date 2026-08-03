@@ -45,7 +45,12 @@ const CONVERSATION_ENGINE_SELECT = {
   status: true,
   needsHuman: true,
   linkSent: true,
+  lastActivityAt: true, // stale-thread detection (24h bot restart)
 };
+
+// A lead that went quiet for this long and then writes again gets a FRESH bot
+// run — no resuming a days-old flow question, no permanent "one & done" silence.
+const STALE_CONVERSATION_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Main entry point: process one inbound customer message end-to-end, on behalf
@@ -91,14 +96,38 @@ export async function handleIncomingMessage({ tenant, phone, text, name, rawPayl
     select: CONVERSATION_ENGINE_SELECT,
   });
 
+  // 2-stale) 24h idle → restart the bot's process on this thread: clear the flow
+  // pointers (no resuming a days-old mid-flow question) and hand the thread back
+  // to the bot (needs_human that nobody picked up must not stay stuck forever).
+  // History and previously collected answers are kept — only the STATE resets.
+  if (
+    conversation?.lastActivityAt &&
+    Date.now() - new Date(conversation.lastActivityAt).getTime() > STALE_CONVERSATION_MS
+  ) {
+    conversation = await prisma.conversation.update({
+      where: { id: conversation.id },
+      data: { currentFlowId: null, currentQuestionId: null, status: 'active', needsHuman: false },
+      select: CONVERSATION_ENGINE_SELECT,
+    });
+  }
+
   // 2a) "One & done": if there's no open conversation but this customer already
-  // COMPLETED A FLOW, stay silent — record the inbound message (so it's visible in
-  // the dashboard) and bump activity, but don't reply or restart a flow. Scoped to
-  // conversations that actually ran a flow (currentFlowId set), so plain chit-chat
-  // the AI happens to mark "completed" doesn't permanently silence the customer.
+  // COMPLETED A FLOW recently, stay silent — record the inbound message (so it's
+  // visible in the dashboard) and bump activity, but don't reply or restart a flow.
+  // Scoped to conversations that actually ran a flow (currentFlowId set), so plain
+  // chit-chat the AI happens to mark "completed" doesn't silence the customer.
+  // TIME-BOXED to 24h (lastActivityAt gte): a lead who returns after a day of
+  // quiet falls through this guard and gets a brand-new conversation — the bot
+  // restarts its process instead of ignoring them forever.
   if (!conversation) {
     const completed = await prisma.conversation.findFirst({
-      where: { tenantId, customerId: customer.id, status: 'completed', currentFlowId: { not: null } },
+      where: {
+        tenantId,
+        customerId: customer.id,
+        status: 'completed',
+        currentFlowId: { not: null },
+        lastActivityAt: { gte: new Date(Date.now() - STALE_CONVERSATION_MS) },
+      },
       orderBy: { createdAt: 'desc' },
       select: CONVERSATION_ENGINE_SELECT,
     });

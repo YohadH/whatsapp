@@ -105,13 +105,22 @@ export default function Conversations() {
     return () => clearInterval(t);
   }, [selId, loadConv]);
 
-  // Auto-scroll to newest, but only if the user is already near the bottom.
+  // Auto-scroll to newest. OPENING a conversation always jumps straight to the
+  // last message (the pane still holds the previous scroll position, so the old
+  // near-bottom guard silently skipped the jump and threads opened at the top);
+  // after that, live updates scroll only if the user is already near the bottom,
+  // so reading history is never yanked away.
   const msgCount = conv?.messages?.length || 0;
+  const scrolledConvRef = useRef(null);
   useEffect(() => {
     const el = scrollRef.current;
-    if (!el) return;
+    if (!el || !msgCount) return;
+    const isNewConv = scrolledConvRef.current !== selId;
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 160;
-    if (nearBottom) endRef.current?.scrollIntoView({ block: 'end' });
+    if (isNewConv || nearBottom) {
+      endRef.current?.scrollIntoView({ block: 'end' });
+      scrolledConvRef.current = selId;
+    }
   }, [msgCount, selId]);
 
   function selectConv(id) {
