@@ -5,6 +5,7 @@ import prisma from '../lib/prisma.js';
 import { signToken, requireAuth } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/error.js';
 import { planEntitlements } from '../lib/plans.js';
+import { seedTrialExample } from '../services/trialSeed.js';
 
 const router = Router();
 
@@ -86,6 +87,14 @@ router.post(
       },
       select: { id: true, email: true, name: true, role: true, tenantId: true, mustResetPassword: true },
     });
+
+    // Seed one ready example (flow + demo AI conversation) so the trial isn't
+    // empty. Best-effort — a seed failure must never block signup.
+    try {
+      await seedTrialExample(tenant.id);
+    } catch (err) {
+      console.error('[register] trial example seed failed:', err.message);
+    }
 
     const token = signToken({ sub: user.id, email: user.email, role: user.role, tenantId: user.tenantId });
     res.status(201).json({ token, user, trialEndsAt: tenant.trialEndsAt });
