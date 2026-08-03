@@ -59,6 +59,13 @@ API & automations).
 3. Coexistence onboarding card + "שיתוף היסטוריית צ'אטים" opt-in — **blocked on
    Meta Tech Provider approval** (external dependency; application in progress).
    Check: min WhatsApp Business app version, IL availability.
+4. **Chat-import UI** (their "חיבור וייבוא מוואצאפ" QR modal): the 3-step
+   scan → sync → ready screen. The QR is the LINKED-DEVICE pairing step of the
+   official coexistence flow (scanned from WhatsApp Business → Linked devices);
+   the "העתקת כל הצ'אטים" promise is the coexistence history-sync (~6 months)
+   arriving as webhook payloads — which is exactly what 2.2's ingest handles.
+   ⚠ The same QR UX can also be built on the UNOFFICIAL web protocol
+   (Baileys-style) — ban-risk + ToS violation; we only ship the official path.
 
 ## Phase 3 — Platform openness
 1. **BYO AI key** (their Gemini/Claude/ChatGPT picker): per-tenant provider +
