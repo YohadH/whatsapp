@@ -38,6 +38,22 @@ router.put(
     const kb = await getOrCreate(req.tenantId);
     const data = {};
     for (const f of FIELDS) if (req.body?.[f] !== undefined) data[f] = req.body[f];
+    // Structured schedule (validated shape) — drives the out-of-hours auto-reply.
+    if (req.body?.businessHours !== undefined) {
+      const bh = req.body.businessHours;
+      if (bh === null) data.businessHours = null;
+      else {
+        const days = Array.isArray(bh.days) ? bh.days.map(Number).filter((d) => d >= 0 && d <= 6) : [];
+        const time = (v, dflt) => (/^\d{2}:\d{2}$/.test(String(v || '')) ? v : dflt);
+        data.businessHours = {
+          enabled: bh.enabled === true,
+          days: [...new Set(days)].sort(),
+          open: time(bh.open, '09:00'),
+          close: time(bh.close, '17:00'),
+          awayMessage: String(bh.awayMessage || '').slice(0, 500),
+        };
+      }
+    }
     const updated = await prisma.knowledgeBase.update({ where: { id: kb.id }, data });
     res.json(updated);
   })

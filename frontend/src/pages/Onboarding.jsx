@@ -281,6 +281,7 @@ export default function Onboarding() {
               <div className="flex items-center gap-4">
                 <button className="btn-primary px-8" disabled={saving} onClick={continueStep2}>המשך ←</button>
                 <button className="text-sm text-slate-400 hover:text-slate-600" onClick={() => setStep(1)}>→ חזרה</button>
+                <button className="text-sm text-slate-400 hover:text-slate-600 ms-auto" onClick={() => navigate('/dashboard')}>דלגו ואחברו אחר כך</button>
               </div>
             </>
           )}

@@ -45,6 +45,10 @@ export const TENANT_SELECT = {
   lowCreditNotifiedAt: true,
   integrations: true, // owner-toggled connections map (read in routes/settings.js)
   ownerPhone: true, // owner-recognition for the receipts pipeline (services/receipts.js)
+  timezone: true, // out-of-hours schedule evaluation (conversationEngine)
+  aiProvider: true, // BYO-AI (dormant until configured)
+  aiApiKeyEnc: true,
+  aiModel: true,
 };
 
 // Resolve the active tenant for a request and attach `req.tenant` / `req.tenantId`.

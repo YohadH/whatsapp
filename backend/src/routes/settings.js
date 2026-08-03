@@ -69,6 +69,59 @@ router.put(
   })
 );
 
+// ── AI provider (BYO key — Phase 3.1) ────────────────────────────────────────
+// GET returns the provider + model + whether a key is stored (never the key).
+// PUT sets provider/model/key; provider 'platform' (or empty) clears BYO and
+// reverts to the platform OpenAI key + credits.
+const AI_PROVIDERS = {
+  openai: { label: 'OpenAI (ChatGPT)', models: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1', 'gpt-4.1-mini'] },
+  anthropic: { label: 'Anthropic (Claude)', models: ['claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5'] },
+};
+
+router.get(
+  '/ai',
+  asyncHandler(async (req, res) => {
+    const t = await prisma.tenant.findUnique({
+      where: { id: req.tenantId },
+      select: { aiProvider: true, aiModel: true, aiApiKeyEnc: true },
+    });
+    res.json({
+      providers: AI_PROVIDERS,
+      provider: t?.aiProvider || 'platform',
+      model: t?.aiModel || '',
+      hasKey: Boolean(t?.aiApiKeyEnc),
+    });
+  })
+);
+
+router.put(
+  '/ai',
+  asyncHandler(async (req, res) => {
+    const provider = String(req.body?.provider || 'platform');
+    // Revert to the platform key + credits.
+    if (provider === 'platform' || provider === '') {
+      await prisma.tenant.update({
+        where: { id: req.tenantId },
+        data: { aiProvider: null, aiModel: null, aiApiKeyEnc: null },
+      });
+      return res.json({ provider: 'platform', hasKey: false });
+    }
+    if (!AI_PROVIDERS[provider]) return res.status(400).json({ error: 'ספק AI לא נתמך' });
+    const model = String(req.body?.model || '').trim() || AI_PROVIDERS[provider].models[0];
+    const data = { aiProvider: provider, aiModel: model };
+    // Key optional on update (keep the stored one if omitted); required if none stored yet.
+    const rawKey = typeof req.body?.apiKey === 'string' ? req.body.apiKey.trim() : '';
+    if (rawKey) {
+      data.aiApiKeyEnc = encryptSecret(rawKey);
+    } else {
+      const existing = await prisma.tenant.findUnique({ where: { id: req.tenantId }, select: { aiApiKeyEnc: true } });
+      if (!existing?.aiApiKeyEnc) return res.status(400).json({ error: 'נדרש מפתח API' });
+    }
+    const t = await prisma.tenant.update({ where: { id: req.tenantId }, data });
+    res.json({ provider: t.aiProvider, model: t.aiModel, hasKey: Boolean(t.aiApiKeyEnc) });
+  })
+);
+
 // ── Connect by phone number (no Embedded Signup) ─────────────────────────────
 // The customer types their number + a display name; we register it under the
 // PLATFORM's WABA and Meta texts them a code, which they enter to finish.

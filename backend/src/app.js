@@ -31,6 +31,7 @@ import billingRoutes from './routes/billing.js';
 import paymentsRoutes from './routes/payments.js';
 import integrationsRoutes, { googleCallbackRouter } from './routes/integrations.js';
 import expensesRoutes from './routes/expenses.js';
+import listsRoutes from './routes/lists.js';
 
 const app = express();
 
@@ -104,6 +105,7 @@ app.use('/api/credits', requireAuth, withTenant, creditsRoutes); // AI credit ba
 app.use('/api/billing', requireAuth, withTenant, billingRoutes); // Stripe subscription checkout (HeyIL plan)
 app.use('/api/integrations', requireAuth, withTenant, integrationsRoutes); // Google add-on (flag-gated, OFF by default)
 app.use('/api/expenses', requireAuth, withTenant, expensesRoutes); // receipts-by-WhatsApp expense book
+app.use('/api/lists', requireAuth, withTenant, listsRoutes); // saved recipient lists (דיוור)
 
 // ── Serve the built frontend (single-service deploy) ───
 // Two HTML entries live in dist: index.html is the public marketing landing page

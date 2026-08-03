@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../api/client.js';
 import { PageHeader } from '../components/Layout.jsx';
 import { Spinner, Modal } from '../components/ui.jsx';
+import { MESSAGE_TEMPLATES, MESSAGE_TEMPLATE_CATEGORIES } from '../data/messageTemplates.js';
 
 const STATUS_BADGE = {
   APPROVED: 'bg-green-100 text-green-700',
@@ -23,6 +24,24 @@ export default function Broadcast() {
   const [tplRefreshing, setTplRefreshing] = useState(false);
   const [editingId, setEditingId] = useState(null); // template id being edited (null = create mode)
   const [deletingName, setDeletingName] = useState('');
+
+  const [showGallery, setShowGallery] = useState(false); // template library
+  const [galleryCat, setGalleryCat] = useState('all');
+  const [campaignName, setCampaignName] = useState(''); // BroadcastJob.label
+
+  // Saved recipient lists — a reusable audience source alongside file upload.
+  const [savedLists, setSavedLists] = useState([]);
+  const [listContacts, setListContacts] = useState([]); // members from the chosen list
+  const [chosenListId, setChosenListId] = useState('');
+  const loadLists = () => api.get('/api/lists').then((r) => setSavedLists(r.data || [])).catch(() => {});
+  async function pickList(id) {
+    setChosenListId(id);
+    if (!id) { setListContacts([]); return; }
+    try {
+      const r = await api.get(`/api/lists/${id}`);
+      setListContacts((r.data.members || []).map((m) => ({ phone: m.phone, name: m.name })));
+    } catch { setListContacts([]); }
+  }
 
   const [mode, setMode] = useState('template'); // 'template' | 'text'
   const [templateName, setTemplateName] = useState('');
@@ -106,6 +125,16 @@ export default function Broadcast() {
     setShowCreate(true);
   }
 
+  // Adopt a library template → prefill the create-template modal, then it goes
+  // to Meta for approval like any hand-written one.
+  function pickLibraryTemplate(t) {
+    setNewTpl({ name: t.name, category: t.category, language: 'he', bodyText: t.bodyText, footerText: t.footerText || '', examples: t.examples || '' });
+    setEditingId(null);
+    setCreateErr('');
+    setShowGallery(false);
+    setShowCreate(true);
+  }
+
   // Open the modal pre-filled to EDIT an existing template.
   function openEdit(t) {
     setNewTpl({ name: t.name, category: t.category || 'UTILITY', language: t.language || 'he', bodyText: t.bodyText || '', footerText: t.footerText || '', examples: '' });
@@ -165,6 +194,7 @@ export default function Broadcast() {
     loadTemplates();
     refreshQuota();
     loadEligible();
+    loadLists();
     // Re-attach to the last campaign (it keeps running server-side even if the
     // page was closed), or show one that's waiting to be resumed.
     api
@@ -238,6 +268,23 @@ export default function Broadcast() {
     }
   }
 
+  // Persist the currently-mapped file rows as a reusable saved list.
+  async function saveFileAsList() {
+    const name = window.prompt('שם לרשימה החדשה:');
+    if (!name?.trim()) return;
+    const nameCol = varColumns[0] || columns.find((c) => /name|שם/i.test(c));
+    const members = rows
+      .map((r) => ({ phone: r[phoneColumn], name: nameCol ? r[nameCol] : null }))
+      .filter((m) => String(m.phone ?? '').trim());
+    try {
+      const r = await api.post('/api/lists', { name: name.trim(), members });
+      await loadLists();
+      alert(`הרשימה "${r.data.name}" נשמרה (${r.data.count} נמענים${r.data.dropped ? `, ${r.data.dropped} נפסלו` : ''}).`);
+    } catch (err) {
+      alert(err.response?.data?.error || 'שמירת הרשימה נכשלה');
+    }
+  }
+
   function setVarCol(i, col) {
     setVarColumns((v) => {
       const next = [...v];
@@ -261,9 +308,21 @@ export default function Broadcast() {
       vars: Array.from({ length: Math.max(varCount, 0) }, (_, i) => (i === 0 ? c.name || '' : '')),
     }));
 
-  // File rows win on duplicates (they may carry mapped variables).
+  // Members from the chosen saved list; name fills {{1}}.
+  const savedListContacts = listContacts.map((c) => ({
+    phone: c.phone,
+    vars: Array.from({ length: Math.max(varCount, 0) }, (_, i) => (i === 0 ? c.name || '' : '')),
+  }));
+
+  // Merge all sources, dedup by phone (file rows win — they may carry mapped vars).
   const seenPhones = new Set(fileContacts.map((c) => String(c.phone).trim()));
-  const contacts = [...fileContacts, ...pickedContacts.filter((c) => !seenPhones.has(String(c.phone).trim()))];
+  const extra = [...pickedContacts, ...savedListContacts].filter((c) => {
+    const p = String(c.phone).trim();
+    if (seenPhones.has(p)) return false;
+    seenPhones.add(p);
+    return true;
+  });
+  const contacts = [...fileContacts, ...extra];
 
   const canSend =
     contacts.length > 0 &&
@@ -285,13 +344,14 @@ export default function Broadcast() {
         mode === 'template'
           ? {
               mode: 'template',
+              label: campaignName.trim() || undefined,
               templateName,
               languageCode,
               contacts,
               headerImageLink: headerImageUrl || undefined,
               requireHeaderImage: imageRequired,
             }
-          : { mode: 'text', message, contacts };
+          : { mode: 'text', label: campaignName.trim() || undefined, message, contacts };
       const r = await api.post('/api/broadcast/send', payload);
       setQuota(r.data.quota);
       const jr = await api.get(`/api/broadcast/jobs/${r.data.jobId}`);
@@ -344,6 +404,7 @@ export default function Broadcast() {
             <button type="button" className="btn-ghost text-xs" disabled={tplRefreshing} onClick={refreshTemplates}>
               {tplRefreshing ? 'מרענן…' : '↻ רענון סטטוס'}
             </button>
+            <button type="button" className="btn-ghost text-xs" onClick={() => setShowGallery(true)}>📚 ספריית תבניות</button>
             <button type="button" className="btn-primary text-xs" onClick={openCreate}>+ תבנית חדשה</button>
           </div>
         </div>
@@ -383,6 +444,36 @@ export default function Broadcast() {
           </div>
         )}
       </div>
+
+      {showGallery && (
+        <Modal open title="📚 ספריית תבניות" onClose={() => setShowGallery(false)}>
+          <p className="text-sm text-slate-500 mb-3">בחרו תבנית מוכנה — היא תיפתח לעריכה ותישלח לאישור Meta. {'{{1}}'} הם משתנים שתמלאו בעת השליחה.</p>
+          <div className="flex gap-2 mb-3 flex-wrap">
+            {MESSAGE_TEMPLATE_CATEGORIES.map((c) => (
+              <button key={c.id} type="button" onClick={() => setGalleryCat(c.id)}
+                className={`text-xs px-3 py-1.5 rounded-full border transition ${galleryCat === c.id ? 'border-brand-500 bg-brand-50 text-brand-700 font-medium' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}>
+                {c.label}
+              </button>
+            ))}
+          </div>
+          <div className="grid sm:grid-cols-2 gap-3 max-h-[60vh] overflow-y-auto pr-1">
+            {MESSAGE_TEMPLATES.filter((t) => galleryCat === 'all' || t.category === galleryCat).map((t) => (
+              <div key={t.name} className="rounded-xl border border-slate-200 p-3 flex flex-col">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-lg">{t.icon}</span>
+                  <span className="font-medium text-sm text-ink-900">{t.title}</span>
+                </div>
+                {/* WhatsApp-bubble preview */}
+                <div className="rounded-lg bg-[#d9fdd3] text-[13px] text-slate-800 p-2.5 whitespace-pre-wrap leading-relaxed mb-2 flex-1">
+                  {t.bodyText}
+                  {t.footerText && <div className="text-[11px] text-slate-500 mt-1.5">{t.footerText}</div>}
+                </div>
+                <button type="button" className="btn-primary text-xs w-full" onClick={() => pickLibraryTemplate(t)}>בחירה →</button>
+              </div>
+            ))}
+          </div>
+        </Modal>
+      )}
 
       {showCreate && (
         <Modal open title={editingId ? 'עריכת תבנית' : 'יצירת תבנית חדשה'} onClose={() => { setShowCreate(false); resetTemplateForm(); }}>
@@ -453,6 +544,10 @@ export default function Broadcast() {
         {/* Message setup */}
         <div className="card space-y-3">
           <h3 className="font-semibold">1. ההודעה</h3>
+          <div>
+            <label className="label">שם הקמפיין (לזיהוי בהיסטוריה)</label>
+            <input className="input" value={campaignName} onChange={(e) => setCampaignName(e.target.value)} placeholder="לדוגמה: מבצע קיץ 2026" />
+          </div>
           <div className="flex gap-2">
             <button className={`btn-ghost text-sm ${mode === 'template' ? 'bg-brand-100 font-medium' : ''}`} onClick={() => setMode('template')}>
               תבנית מאושרת
@@ -560,6 +655,18 @@ export default function Broadcast() {
             )}
           </div>
 
+          {/* Saved recipient lists — reusable audience */}
+          {savedLists.length > 0 && (
+            <div>
+              <label className="label">📋 רשימה שמורה</label>
+              <select className="input" value={chosenListId} onChange={(e) => pickList(e.target.value)}>
+                <option value="">— בחרו רשימה —</option>
+                {savedLists.map((l) => <option key={l.id} value={l.id}>{l.name} ({l.count})</option>)}
+              </select>
+              {chosenListId && <p className="text-xs text-green-700 mt-1">{listContacts.length} נמענים מהרשימה יצורפו לשליחה.</p>}
+            </div>
+          )}
+
           <label className="btn-ghost cursor-pointer text-sm inline-block">
             {parsing ? 'קורא…' : 'העלאת קובץ CSV / XLSX'}
             <input type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={(e) => onFile(e.target.files?.[0])} />
@@ -567,7 +674,10 @@ export default function Broadcast() {
 
           {columns.length > 0 && (
             <>
-              <div className="text-sm text-gray-600">{rows.length} שורות · {contacts.length} מספרים לשליחה</div>
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="text-sm text-gray-600">{rows.length} שורות · {contacts.length} מספרים לשליחה</div>
+                <button type="button" className="text-xs text-brand-600 hover:underline" onClick={saveFileAsList}>💾 שמירה כרשימה</button>
+              </div>
               <div>
                 <label className="label">עמודת טלפון</label>
                 <select className="input" value={phoneColumn} onChange={(e) => setPhoneColumn(e.target.value)}>
@@ -615,6 +725,7 @@ export default function Broadcast() {
                 quota_reached: '⏸️ הושגה המכסה היומית',
                 aborted: '🛑 הקמפיין נעצר אוטומטית',
               }[job.status] || job.status}
+              {job.label && <span className="text-sm font-normal text-slate-500 ms-2">· {job.label}</span>}
             </h3>
             <div className="flex gap-2">
               {jobActive && (

@@ -52,6 +52,46 @@ const CONVERSATION_ENGINE_SELECT = {
 // run — no resuming a days-old flow question, no permanent "one & done" silence.
 const STALE_CONVERSATION_MS = 24 * 60 * 60 * 1000;
 
+// ── Out-of-hours (structured KB businessHours) ───────────────
+// Day indexing matches the UI chips: 0=Sunday(א׳) … 6=Saturday(ש׳).
+const WEEKDAY_INDEX = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+
+// True when the tenant's structured schedule says "closed right now".
+// Disabled/missing/malformed schedule → never out-of-hours (fail open).
+function isOutOfHours(businessHours, timezone) {
+  const bh = businessHours;
+  if (!bh || bh.enabled !== true || !bh.awayMessage) return false;
+  try {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: timezone || 'Asia/Jerusalem',
+      hour12: false,
+      weekday: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).formatToParts(new Date());
+    const get = (t) => parts.find((p) => p.type === t)?.value || '';
+    const day = WEEKDAY_INDEX[get('weekday')];
+    const hhmm = `${get('hour')}:${get('minute')}`;
+    if (!Array.isArray(bh.days) || !bh.days.includes(day)) return true;
+    return hhmm < (bh.open || '00:00') || hhmm >= (bh.close || '24:00');
+  } catch {
+    return false;
+  }
+}
+
+// Don't repeat the away message on every night-time ping: suppress a resend if
+// the SAME away text already went out on this conversation in the last 6h.
+const AWAY_RESEND_MS = 6 * 60 * 60 * 1000;
+function awayAlreadySentRecently(history, awayMessage) {
+  const cutoff = Date.now() - AWAY_RESEND_MS;
+  return history.some(
+    (m) =>
+      m.senderType === 'agent' &&
+      m.messageText === awayMessage &&
+      new Date(m.createdAt).getTime() > cutoff
+  );
+}
+
 /**
  * Main entry point: process one inbound customer message end-to-end, on behalf
  * of a specific tenant. `tenant` is the full Tenant row (its WhatsApp creds are
@@ -286,6 +326,41 @@ export async function handleIncomingMessage({ tenant, phone, text, name, rawPayl
     }),
   ]);
 
+  // 4.5) Out-of-hours: outside the structured schedule the bot answers with the
+  // configured away message instead of running flows/AI (inbound already stored,
+  // thread stays open). Re-sends are throttled to once per 6h per conversation.
+  if (isOutOfHours(kb?.businessHours, tenant.timezone)) {
+    const away = kb.businessHours.awayMessage;
+    if (!awayAlreadySentRecently(history, away)) {
+      try {
+        await sendWhatsAppMessage(creds, phone, away);
+      } catch (err) {
+        console.error('[engine] out-of-hours reply failed:', err.message);
+      }
+      await prisma.message.create({
+        data: {
+          tenantId,
+          conversationId: conversation.id,
+          senderType: 'agent',
+          messageText: away,
+          intent: 'out_of_hours',
+          rawPayload: { via: 'rules' },
+        },
+      });
+    }
+    await prisma.conversation.update({
+      where: { id: conversation.id },
+      data: { lastMessage: text, lastActivityAt: new Date() },
+      select: { id: true },
+    });
+    return {
+      conversation,
+      agentResponse: { intent: 'out_of_hours', response_text: kb.businessHours.awayMessage },
+      replySent: true,
+      outOfHours: true,
+    };
+  }
+
   // Deterministic flow selection when not already inside a flow:
   //  1) a flow whose trigger words appear in the message, else
   //  2) a "default" flow (isDefault) that starts on ANY message (e.g. "hey").
@@ -299,6 +374,7 @@ export async function handleIncomingMessage({ tenant, phone, text, name, rawPayl
 
   const ctx = {
     incomingText: text,
+    tenant, // selects the AI provider (BYO key vs platform) in services/llm.js
     knowledgeBase: kb,
     flows,
     state: {
@@ -338,15 +414,19 @@ export async function handleIncomingMessage({ tenant, phone, text, name, rawPayl
     ctx.state.startFlowId = suggestedFlow.id;
     agentResponse = ruleBasedResponse(ctx);
   } else {
-    // No flow context → ask the LLM (KB answer or conversational start), but only
-    // if the tenant has credits. Out of credits → rule-based reply, no charge.
-    const allowAI = await hasCredits(tenantId);
-    outOfCredits = !allowAI;
+    // No flow context → ask the LLM (KB answer or conversational start). A tenant on
+    // its OWN AI key (BYO — services/llm.js) bypasses the credit gate entirely; it
+    // pays its provider directly, so credits never apply. Platform-key tenants still
+    // gate on credits: out of credits → rule-based reply, no charge.
+    const byoKey = tenant.aiProvider && tenant.aiApiKeyEnc;
+    const allowAI = byoKey ? true : await hasCredits(tenantId);
+    outOfCredits = !byoKey && !allowAI;
     const { response: llm, ai } = await generateAgentResponse(ctx, { allowAI });
-    if (ai.used) {
-      // A real OpenAI reply was produced. Billing unit = a 24h CONVERSATION window:
-      // this charges 1 credit only when this reply OPENS A NEW window on the
-      // conversation; replies inside an already-open window are free (charged:false).
+    if (ai.used && ai.billable) {
+      // A PLATFORM-key LLM reply was produced (BYO-key replies are ai.billable:false
+      // and skip this block). Billing unit = a 24h CONVERSATION window: charges 1
+      // credit only when this reply OPENS A NEW window; replies inside an open window
+      // are free (charged:false).
       const result = await chargeAiCredit({
         conversationId: conversation.id,
         tenantId,

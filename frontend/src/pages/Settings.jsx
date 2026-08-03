@@ -52,10 +52,107 @@ export default function Settings() {
       </div>
 
       <BusinessProfile />
+      <AiProvider />
       <WhatsAppConnect />
       <Integrations google={google} />
       <GoogleConnect status={google} reload={loadGoogle} />
       <Simulator />
+    </div>
+  );
+}
+
+// AI provider — bring-your-own key (OpenAI / Claude) or the platform default.
+// When a tenant sets its own key, the agent runs on it and platform AI credits
+// are not consumed. Leaving it on "platform" keeps the credits-backed default.
+function AiProvider() {
+  const [cfg, setCfg] = useState(null); // { providers, provider, model, hasKey }
+  const [provider, setProvider] = useState('platform');
+  const [model, setModel] = useState('');
+  const [apiKey, setApiKey] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [err, setErr] = useState('');
+
+  const load = () =>
+    api.get('/api/settings/ai').then((r) => {
+      setCfg(r.data);
+      setProvider(r.data.provider || 'platform');
+      setModel(r.data.model || '');
+    }).catch(() => {});
+  useEffect(() => { load(); }, []);
+
+  function pickProvider(p) {
+    setProvider(p);
+    setApiKey('');
+    if (p !== 'platform' && cfg?.providers?.[p]) setModel(cfg.providers[p].models[0]);
+  }
+
+  async function save(e) {
+    e.preventDefault();
+    setErr('');
+    setSaved(false);
+    setSaving(true);
+    try {
+      await api.put('/api/settings/ai', { provider, model, apiKey: apiKey.trim() || undefined });
+      setApiKey('');
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+      load();
+    } catch (ex) {
+      setErr(ex.response?.data?.error || 'השמירה נכשלה');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const providers = cfg?.providers || {};
+  const models = provider !== 'platform' ? providers[provider]?.models || [] : [];
+
+  return (
+    <div className="card mt-4">
+      <h3 className="font-semibold mb-1">מנוע הבינה המלאכותית</h3>
+      <p className="text-xs text-slate-400 mb-4">
+        כברירת מחדל הסוכן עובד על מנוע ה-AI שלנו (נצרך מקרדיטים). ניתן לחבר מפתח API משלכם — או-פן-איי או Claude —
+        ואז השיחות ירוצו על החשבון שלכם ולא ינוכו קרדיטים.
+      </p>
+      <form onSubmit={save} className="space-y-4 max-w-2xl">
+        <div className="grid sm:grid-cols-3 gap-2">
+          {[{ id: 'platform', label: 'ברירת מחדל (קרדיטים)' }, { id: 'openai', label: providers.openai?.label || 'OpenAI' }, { id: 'anthropic', label: providers.anthropic?.label || 'Claude' }].map((p) => (
+            <button
+              type="button"
+              key={p.id}
+              onClick={() => pickProvider(p.id)}
+              className={`rounded-xl border px-3 py-3 text-sm text-center transition ${
+                provider === p.id ? 'border-brand-500 bg-brand-50 text-brand-700 font-medium' : 'border-slate-200 hover:border-slate-300'
+              }`}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+
+        {provider !== 'platform' && (
+          <div className="grid sm:grid-cols-2 gap-3">
+            <div>
+              <label className="label">מודל</label>
+              <select className="input" value={model} onChange={(e) => setModel(e.target.value)}>
+                {models.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">מפתח API {cfg?.hasKey && <span className="text-green-600 text-xs">(מפתח שמור ✓)</span>}</label>
+              <input className="input" dir="ltr" type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={provider === 'anthropic' ? 'sk-ant-…' : 'sk-…'} />
+              <p className="text-xs text-slate-400 mt-1">המפתח נשמר מוצפן ולא מוצג שוב.</p>
+            </div>
+          </div>
+        )}
+
+        <div className="flex items-center gap-3">
+          <button className="btn-primary" disabled={saving}>{saving ? 'שומר…' : 'שמירה'}</button>
+          {saved && <span className="text-sm text-green-600">✓ נשמר</span>}
+          {err && <span className="text-sm text-red-600">{err}</span>}
+        </div>
+      </form>
     </div>
   );
 }

@@ -169,6 +169,7 @@ const JOB_PUBLIC_SELECT = {
   status: true,
   abortReason: true,
   mode: true,
+  label: true,
   templateName: true,
   languageCode: true,
   message: true,
@@ -213,6 +214,7 @@ router.post(
   asyncHandler(async (req, res) => {
     const {
       mode = 'template',
+      label, // campaign name (shown in history)
       templateName,
       languageCode = 'he',
       message,
@@ -265,6 +267,7 @@ router.post(
       data: {
         tenantId: req.tenantId,
         mode,
+        label: String(label || '').trim().slice(0, 80) || null,
         templateName: templateName || null,
         languageCode: languageCode || null,
         message: message || null,

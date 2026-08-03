@@ -104,6 +104,14 @@ model Tenant {
   // Nullable/additive (MIGRATION 10_tenant_integrations) — code treats null as {}.
   integrations Json?
 
+  // ── Tenant AI provider (BYO key — Phase 3.1, DORMANT until enabled) ──
+  // When aiProvider+aiApiKeyEnc are set the agent runs on the tenant's own key
+  // (openai | anthropic); otherwise the platform OpenAI key + credits apply.
+  // Key encrypted at rest exactly like waTokenEnc. aiModel optional override.
+  aiProvider  String?
+  aiApiKeyEnc String?
+  aiModel     String?
+
   // ── Owner's personal WhatsApp number ──
   // Digits-only international format (e.g. 972501234567). Used to recognize the
   // OWNER in the inbound webhook: an image the owner sends to their own business
@@ -132,8 +140,40 @@ model Tenant {
   googleOAuthStates GoogleOAuthState[]
   metaCostEntries   MetaCostEntry[]
   expenses          Expense[]
+  recipientLists    RecipientList[]
 
   @@index([status])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Saved recipient list (דיוור) — a reusable audience asset. Members hold a
+// normalized international phone (digits only) plus optional name/vars used to
+// fill template variables. Import sources: manual, CSV/XLSX; Sheets later.
+model RecipientList {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant  Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  members RecipientListMember[]
+
+  @@index([tenantId, updatedAt])
+}
+
+model RecipientListMember {
+  id       String  @id @default(cuid())
+  tenantId String
+  listId   String
+  phone    String // normalized digits-only international (972…)
+  name     String?
+  vars     Json    @default("[]") // template variable values beyond {{1}}=name
+
+  list RecipientList @relation(fields: [listId], references: [id], onDelete: Cascade)
+
+  @@unique([listId, phone])
+  @@index([listId])
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -541,6 +581,7 @@ model SuppressedNumber {
 model BroadcastJob {
   id                 String   @id @default(cuid())
   tenantId           String
+  label              String? // campaign name shown in history (nullable/additive)
   status             String   @default("running") // running | completed | stopped | quota_reached | aborted
   abortReason        String?
   mode               String   @default("template") // template | text
@@ -596,6 +637,10 @@ model KnowledgeBase {
   returnPolicy        String?
   faq                 String?
   openingHours        String?
+  // Structured schedule (nullable/additive): { enabled, days:[0..6], open:"09:00",
+  // close:"17:00", awayMessage } — drives the out-of-hours auto-reply in the
+  // conversation engine; the free-text openingHours stays for the agent prompt.
+  businessHours       Json?
   contactDetails      String?
   limitations         String?
   customInstructions  String?
