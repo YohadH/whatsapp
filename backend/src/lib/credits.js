@@ -1,4 +1,5 @@
 import prisma from './prisma.js';
+import { isTrialExpiredUnpaid } from './plans.js';
 
 // AI credits — 1 credit = one handled CONVERSATION within a rolling 24-HOUR WINDOW
 // (NOT one credit per AI message). The FIRST AI-answered message that opens a new
@@ -42,12 +43,32 @@ export function creditsState(tenant) {
 }
 
 // Fast gate before calling the LLM. Reads the current tenant credit fields.
+//
+// TRIAL ENFORCEMENT (cost-leak fix): a self-service trial tenant whose 14-day trial
+// has elapsed WITHOUT converting to a paid Stripe subscription gets NO platform AI —
+// isTrialExpiredUnpaid() short-circuits to `false` BEFORE the balance check, so the
+// caller (conversationEngine's platform-key branch, reached by BOTH the real webhook
+// and /simulate) falls back to the rule-based reply and never spends an OpenAI call
+// on the platform's own bill. Without this, resetElapsedPeriods() re-grants ~500
+// credits/period to every tenant forever regardless of trial expiry, letting anyone
+// register throwaway trials and farm real OpenAI spend indefinitely. BYO-key tenants
+// never reach here (they bypass hasCredits and pay their own provider), so their
+// trial state is intentionally irrelevant to platform cost.
 export async function hasCredits(tenantId) {
   const t = await prisma.tenant.findUnique({
     where: { id: tenantId },
-    select: { monthlyMessageLimit: true, creditsUsedThisPeriod: true, purchasedCredits: true },
+    // trialEndsAt (0_init) + subscriptionStatus (9_stripe_billing) are both live —
+    // explicit select keeps this drift-safe (AP-T71).
+    select: {
+      monthlyMessageLimit: true,
+      creditsUsedThisPeriod: true,
+      purchasedCredits: true,
+      trialEndsAt: true,
+      subscriptionStatus: true,
+    },
   });
   if (!t) return false;
+  if (isTrialExpiredUnpaid(t)) return false;
   return creditsState(t).available > 0;
 }
 

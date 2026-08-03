@@ -169,6 +169,16 @@ router.post(
 // Local simulator: drive the full pipeline without Meta, for the caller's own
 // tenant. Auth-gated (no longer public) so it can't be abused to send messages
 // or burn OpenAI credits.
+//
+// COST-LEAK LOCKDOWN: /simulate runs the FULL AI-charging pipeline (handleIncomingMessage
+// → the platform OpenAI key) with NO real WhatsApp connection required, so a fresh trial
+// signup could otherwise hit real OpenAI billing here unlimited times at zero cost to
+// themselves. Two gates now stop that: (1) the tenant must have an ACTUALLY-CONNECTED
+// WhatsApp number — waPhoneNumberId + an encrypted token (the same enabled-signal
+// lib/tenantContext.js uses) — so simulate only works once a tenant has done the real
+// WhatsApp onboarding, not on a throwaway account; (2) even for a connected tenant, the
+// downstream hasCredits() gate (lib/credits.js) already withholds platform AI from an
+// expired-unpaid trial, so an expired trial gets only the free rule-based reply here too.
 router.post(
   '/simulate',
   requireAuth,
@@ -176,6 +186,16 @@ router.post(
   asyncHandler(async (req, res) => {
     const { phone, text, name } = req.body || {};
     if (!phone || !text) return res.status(400).json({ error: 'phone and text are required' });
+    // "WhatsApp connected" = a routable phone number id AND an encrypted access token
+    // (mirrors tenantContext.js `enabled: Boolean(token && waPhoneNumberId)`). Both come
+    // from TENANT_SELECT. Without a real connection, refuse — no OpenAI spend on a fresh
+    // trial that never onboarded WhatsApp.
+    if (!req.tenant.waPhoneNumberId || !req.tenant.waTokenEnc) {
+      return res.status(403).json({
+        error: 'חברו מספר WhatsApp פעיל לפני שימוש בסימולטור',
+        code: 'whatsapp_not_connected',
+      });
+    }
     if (await handleOptOut(req.tenant, phone, text)) return res.json({ optedOut: true });
     const result = await handleIncomingMessage({ tenant: req.tenant, phone, text, name });
     res.json(result);

@@ -24,6 +24,42 @@ export function isValidPlan(plan) {
   return Object.prototype.hasOwnProperty.call(PLANS, plan);
 }
 
+// A tenant with an ACTIVE paid Stripe subscription. This is the single source of
+// truth for "is currently paying". `subscriptionStatus` is Stripe's own value
+// (active | past_due | canceled | incomplete), kept in sync by the Stripe webhooks
+// (routes/payments.js): checkout.session.completed / invoice.paid set 'active';
+// invoice.payment_failed → 'past_due'; customer.subscription.deleted → 'canceled'.
+// A lapsed subscriber is reverted to plan:'trial' by those same webhooks but keeps
+// a non-'active' subscriptionStatus, so this predicate correctly stops treating them
+// as paying. Column is migration 9_stripe_billing (live-applied — payment webhooks
+// read/write it in prod). Only pass a tenant row that explicitly selected the field.
+export function hasActivePaidSubscription(tenant) {
+  return tenant?.subscriptionStatus === 'active';
+}
+
+// TRUE when this is a self-service trial tenant whose 14-day trial has ELAPSED and
+// who has NOT converted to a paid subscription. Such a tenant must NOT be granted or
+// re-granted platform AI credits (that would let anyone farm the platform's own
+// OpenAI bill indefinitely from a throwaway trial signup — the cost-leak this guards).
+//
+//   - trialEndsAt is null → NOT a self-service trial (admin-provisioned / paid): never
+//     "expired" by this check. Unaffected.
+//   - trialEndsAt in the FUTURE → still inside the trial window. Unaffected.
+//   - trialEndsAt in the PAST + active paid sub → converted; keep serving. Unaffected.
+//   - trialEndsAt in the PAST + NO active paid sub → expired & unpaid → true (gate).
+//
+// DRIFT SAFETY (AP-T71): reads only trialEndsAt (0_init) + subscriptionStatus
+// (9_stripe_billing) — both live-migrated. Pass a tenant row whose `select` includes
+// both; a row missing them reads undefined and this returns false (fail-open on the
+// benign side, i.e. never wrongly locks out a tenant on a partial projection).
+export function isTrialExpiredUnpaid(tenant, now = new Date()) {
+  if (!tenant) return false;
+  const ends = tenant.trialEndsAt;
+  if (!ends) return false; // not a self-service trial → never expires here
+  if (hasActivePaidSubscription(tenant)) return false; // converted to paid
+  return new Date(ends).getTime() < now.getTime();
+}
+
 // Entitlements for a plan (falls back to trial).
 export function planEntitlements(plan) {
   return PLANS[plan] || PLANS.trial;
