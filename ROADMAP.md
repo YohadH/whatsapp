@@ -49,6 +49,16 @@ API & automations).
      escape hatch (the current editor), adopted flows open in the editor for
      customization before activation.
 
+5. **Structured business hours in the knowledge base** (their "שעות פעילות")
+   - Replace/augment the free-text `KnowledgeBase.openingHours` with a
+     structured widget: day-of-week chips (א׳–ש׳) + open/close time pickers,
+     stored as JSON alongside the existing text (agent prompt renders both).
+   - Powers an **out-of-hours behavior**: engine checks tenant timezone
+     (Tenant.timezone exists) against the schedule → configurable auto-reply
+     ("נחזור אליכם בשעות הפעילות") and/or suppressed handoff alerts at night.
+     Their Flow Builder exposes it as a trigger — ours hooks the same check
+     into the conversation engine + (later) flow conditions.
+
 ## Phase 2 — Onboarding & connect trust
 1. Explainer-video slots in the connect cards (0:48-style clip; owner records,
    we wire the player) + explicit "דלגו ואחברו אחר כך".
