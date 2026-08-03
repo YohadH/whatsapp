@@ -45,11 +45,8 @@ export default function Register() {
     <div className="min-h-screen flex bg-heyil-dark" dir="rtl">
       {/* Value panel (hidden on small screens) */}
       <div className="hidden md:flex flex-col justify-center w-1/2 p-12 text-white">
-        <div className="flex items-center gap-3 mb-10">
-          <img src="/brand/logo-mark-512.png" alt="HeyIL" className="h-14 w-14 rounded-2xl ring-1 ring-white/15" />
-          <span className="text-3xl font-extrabold tracking-tight">
-            Hey<span className="bg-heyil-soft bg-clip-text text-transparent">IL</span>
-          </span>
+        <div className="inline-flex self-start bg-white rounded-2xl px-6 py-4 mb-10 shadow-xl">
+          <img src="/brand/logo-transparent.png" alt="HeyIL" className="h-16 w-auto" />
         </div>
         <h1 className="text-3xl font-bold leading-snug mb-3">
           14 ימי ניסיון חינם
