@@ -31,6 +31,14 @@ export function AuthProvider({ children }) {
     return res.data.user;
   }
 
+  // Self-service trial signup: creates a tenant + owner and logs straight in.
+  async function register(payload) {
+    const res = await api.post('/api/auth/register', payload);
+    localStorage.setItem('wa_token', res.data.token);
+    setUser(res.data.user);
+    return res.data.user;
+  }
+
   function logout() {
     localStorage.removeItem('wa_token');
     localStorage.removeItem(ACTIVE_TENANT_KEY);
@@ -55,7 +63,7 @@ export function AuthProvider({ children }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, loading, login, logout, changePassword, isSuperAdmin, activeTenantId, setActiveTenant }}
+      value={{ user, loading, login, register, logout, changePassword, isSuperAdmin, activeTenantId, setActiveTenant }}
     >
       {children}
     </AuthContext.Provider>

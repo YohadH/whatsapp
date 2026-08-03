@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate, Navigate } from 'react-router-dom';
+import { useNavigate, Navigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 
 export default function Login() {
@@ -62,6 +62,10 @@ export default function Login() {
             {loading ? 'מתחבר…' : 'התחברות'}
           </button>
         </form>
+        <p className="text-sm text-slate-500 text-center mt-5">
+          עדיין אין לכם חשבון?{' '}
+          <Link to="/register" className="text-brand-600 font-medium hover:underline">התחילו 14 ימי ניסיון חינם</Link>
+        </p>
       </div>
     </div>
   );

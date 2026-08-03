@@ -76,7 +76,8 @@ app.get('/health', async (req, res) => {
 
 // ── Public routes ────────────────────────────────────────────
 app.use('/api/auth/login', authLimiter);
-app.use('/api/auth', authRoutes); // /login public, /me self-guards
+app.use('/api/auth/register', authLimiter); // public trial signup — throttle to blunt abuse
+app.use('/api/auth', authRoutes); // /login + /register public, /me self-guards
 app.use('/api/whatsapp/simulate', authLimiter);
 app.use('/api/whatsapp', whatsappRoutes); // webhook (public) + simulator (auth-gated inside)
 app.use('/api/payments', paymentsRoutes); // Stripe + PayPlus callbacks (public, signature-verified) + browser return
