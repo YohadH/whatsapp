@@ -261,7 +261,7 @@ function PhonePreview({ template }) {
             {i < template.questions.length - 1 && (
               <div className="flex justify-end">
                 <div className="bg-[#dcf8c6] rounded-lg rounded-tl-none px-2.5 py-1.5 text-[13px] text-slate-800 shadow-sm">
-                  {SAMPLE_REPLIES[q.questionType] || '…'}
+                  {q.sample || SAMPLE_REPLIES[q.questionType] || '…'}
                 </div>
               </div>
             )}
