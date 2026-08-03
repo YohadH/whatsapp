@@ -315,11 +315,15 @@ export async function registerPhoneNumber(creds, pin) {
       body: JSON.stringify({ messaging_product: 'whatsapp', pin: usePin }),
     });
     const json = await res.json().catch(() => ({}));
-    // "already registered" is a success for our purposes.
+    // A successful register (including re-registering an already-registered number
+    // with the CORRECT pin) returns { success: true }.
     if (res.ok && (json.success || !json.error)) return { ok: true, pin: usePin };
-    if (json.error?.code === 133005 || /already/i.test(json.error?.message || ''))
-      return { ok: true, already: true, pin: usePin };
-    return { ok: false, error: json.error?.message || `HTTP ${res.status}`, pin: usePin };
+    // "Already registered" is genuinely a success for us — but detect it by message,
+    // NOT by code 133005. 133005 is "Two-step verification PIN mismatch", a REAL
+    // failure (wrong/unknown PIN): treating it as success hid broken registrations
+    // that then failed to send with #133010. Surface it as an error instead.
+    if (/already/i.test(json.error?.message || '')) return { ok: true, already: true, pin: usePin };
+    return { ok: false, error: json.error?.message || `HTTP ${res.status}`, code: json.error?.code ?? null, pin: usePin };
   } catch (err) {
     return { ok: false, error: err.message, pin: usePin };
   }
