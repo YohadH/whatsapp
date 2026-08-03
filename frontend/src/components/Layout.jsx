@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
+import api from '../api/client.js';
 
 const NAV = [
   { to: '/dashboard', label: 'דאשבורד', icon: '📊', end: true },
@@ -23,6 +24,17 @@ export default function Layout({ children }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   useEffect(() => { setDrawerOpen(false); }, [location.pathname]);
 
+  // Business name + logo for the mobile top bar (centered). Only fetched when a
+  // tenant context exists (a super-admin who hasn't picked a business has none).
+  const [biz, setBiz] = useState({ name: '', logoUrl: '' });
+  const hasTenant = !isSuperAdmin || !!activeTenantId;
+  useEffect(() => {
+    if (!hasTenant) { setBiz({ name: '', logoUrl: '' }); return; }
+    api.get('/api/settings/profile')
+      .then((r) => setBiz({ name: r.data.name || '', logoUrl: r.data.logoUrl || '' }))
+      .catch(() => {});
+  }, [hasTenant, activeTenantId]);
+
   // Nav item styling — active gets an on-brand green→blue tinted pill; inactive is muted.
   const navClass = ({ isActive }) =>
     `flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition ${
@@ -32,7 +44,8 @@ export default function Layout({ children }) {
     }`;
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    // h-[100dvh] (not 100vh) so iOS Safari's dynamic toolbar doesn't leave a gap.
+    <div className="flex h-screen h-[100dvh] overflow-hidden">
       {/* Mobile drawer backdrop */}
       {drawerOpen && (
         <div className="fixed inset-0 z-30 bg-black/50 lg:hidden" onClick={() => setDrawerOpen(false)} aria-hidden />
@@ -77,15 +90,26 @@ export default function Layout({ children }) {
         </div>
       </aside>
 
-      <main className="flex-1 overflow-y-auto min-w-0">
-        {/* Mobile top bar — HeyIL logo + hamburger (hidden on desktop). */}
-        <div className="lg:hidden sticky top-0 z-20 flex items-center justify-between bg-heyil-dark text-white px-4 py-3 shadow-md">
-          <img src="/brand/logo-transparent-dark.png" alt="HeyIL" className="h-12 w-auto" />
-          <button onClick={() => setDrawerOpen(true)} className="p-2 -mr-2 rounded-lg hover:bg-white/10 transition" aria-label="תפריט">
+      <main className="flex-1 overflow-y-auto overflow-x-hidden min-w-0">
+        {/* Mobile top bar — hamburger (start/right in RTL) · business name (center) ·
+            HeyIL mark (end/left). Safe-area top padding clears the iPhone notch. */}
+        <div
+          className="lg:hidden sticky top-0 z-20 flex items-center gap-3 bg-heyil-dark text-white px-4 py-3 shadow-md"
+          style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}
+        >
+          <button onClick={() => setDrawerOpen(true)} className="p-2 -mr-2 shrink-0 rounded-lg hover:bg-white/10 transition" aria-label="תפריט">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <path d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           </button>
+          <div className="flex-1 min-w-0 text-center font-semibold truncate px-1">
+            {biz.name || (isSuperAdmin ? 'קונסולת פלטפורמה' : '')}
+          </div>
+          {biz.logoUrl ? (
+            <img src={biz.logoUrl} alt={biz.name} className="h-9 w-9 shrink-0 rounded-lg object-cover ring-1 ring-white/20" />
+          ) : (
+            <img src="/brand/logo-mark-512.png" alt="HeyIL" className="h-9 w-9 shrink-0 rounded-lg ring-1 ring-white/15" />
+          )}
         </div>
 
         {/* Super-admin "acting as tenant" banner. */}
