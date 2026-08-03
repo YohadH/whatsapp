@@ -12,6 +12,7 @@ import {
   verifyAndRegister,
   splitPhone,
 } from '../services/numberRegistration.js';
+import { WEBHOOK_SLUGS, isSafeWebhookUrl, deliverToUrl } from '../services/outboundWebhook.js';
 
 // Tenant-facing account settings, scoped to the caller's OWN tenant (req.tenantId,
 // set by withTenant). This lets a tenant admin self-connect their WhatsApp number
@@ -313,14 +314,32 @@ const CATALOG_SLUGS = new Set(INTEGRATION_CATALOG.map((i) => i.slug));
 // Update a slug here the moment its connect flow ships.
 function isIntegrationReady(slug) {
   if (['gmail', 'calendar', 'sheets'].includes(slug)) return Boolean(config.google.enabled);
+  if (WEBHOOK_SLUGS.includes(slug)) return true; // outbound webhook — built, connect by URL
   return false;
+}
+// URL-configurable integrations render a connect form (URL + secret) instead of a
+// plain on/off toggle.
+function isConfigurable(slug) {
+  return WEBHOOK_SLUGS.includes(slug);
 }
 // Catalog annotated with per-item readiness (+ a Hebrew status hint for not-ready).
 function catalogWithReadiness() {
   return INTEGRATION_CATALOG.map((it) => {
     const ready = isIntegrationReady(it.slug);
-    return { ...it, ready, statusNote: ready ? null : 'בקרוב' };
+    return { ...it, ready, configurable: isConfigurable(it.slug), statusNote: ready ? null : 'בקרוב' };
   });
+}
+
+// Read the tenant's integrationConfig JSON safely, returning per-slug public config
+// (the URL + whether a secret is stored — never the secret itself).
+function readIntegrationConfig(tenant) {
+  const raw = tenant?.integrationConfig && typeof tenant.integrationConfig === 'object' ? tenant.integrationConfig : {};
+  const out = {};
+  for (const slug of WEBHOOK_SLUGS) {
+    const c = raw[slug] || {};
+    out[slug] = { url: c.url || '', hasSecret: Boolean(c.secret) };
+  }
+  return out;
 }
 
 // Normalize the stored JSON (which may be null, or hold stale slugs) into a clean
@@ -332,11 +351,79 @@ function readIntegrations(tenant) {
   return out;
 }
 
-// GET /api/settings/integrations → catalog (with readiness) + this tenant's enabled map.
+// GET /api/settings/integrations → catalog (with readiness) + enabled map + per-slug
+// connection config (url + hasSecret, never the secret).
 router.get(
   '/integrations',
   asyncHandler(async (req, res) => {
-    res.json({ catalog: catalogWithReadiness(), enabled: readIntegrations(req.tenant) });
+    res.json({
+      catalog: catalogWithReadiness(),
+      enabled: readIntegrations(req.tenant),
+      config: readIntegrationConfig(req.tenant),
+    });
+  })
+);
+
+// PUT /api/settings/integrations/webhook → connect a webhook target.
+// body: { slug: 'webhook'|'zapier', url, secret? }. Saving a valid URL enables the
+// integration; secret (optional) is used to HMAC-sign outbound bodies. Empty url
+// disconnects (clears config + disables).
+router.put(
+  '/integrations/webhook',
+  asyncHandler(async (req, res) => {
+    const slug = String(req.body?.slug || '');
+    if (!WEBHOOK_SLUGS.includes(slug)) return res.status(400).json({ error: 'אינטגרציה לא נתמכת' });
+    const url = String(req.body?.url || '').trim();
+
+    const t = await prisma.tenant.findUnique({ where: { id: req.tenantId }, select: { integrations: true, integrationConfig: true } });
+    const enabled = t?.integrations && typeof t.integrations === 'object' ? { ...t.integrations } : {};
+    const cfg = t?.integrationConfig && typeof t.integrationConfig === 'object' ? { ...t.integrationConfig } : {};
+
+    if (!url) {
+      // Disconnect.
+      delete cfg[slug];
+      enabled[slug] = false;
+    } else {
+      if (!(await isSafeWebhookUrl(url))) {
+        return res.status(400).json({ error: 'כתובת לא תקינה — נדרשת כתובת HTTPS ציבורית' });
+      }
+      // secret: keep the stored one if omitted; a new non-empty value replaces it;
+      // the literal string "-" clears it.
+      const prevSecret = cfg[slug]?.secret;
+      let secret = prevSecret;
+      if (typeof req.body?.secret === 'string') {
+        const s = req.body.secret.trim();
+        secret = s === '-' ? undefined : s || prevSecret;
+      }
+      cfg[slug] = { url, ...(secret ? { secret } : {}) };
+      enabled[slug] = true;
+    }
+
+    await prisma.tenant.update({ where: { id: req.tenantId }, data: { integrations: enabled, integrationConfig: cfg } });
+    res.json({ enabled, config: { [slug]: { url: cfg[slug]?.url || '', hasSecret: Boolean(cfg[slug]?.secret) } } });
+  })
+);
+
+// POST /api/settings/integrations/webhook/test → send a sample payload to the
+// stored URL and report the receiver's response, so the owner can confirm wiring.
+router.post(
+  '/integrations/webhook/test',
+  asyncHandler(async (req, res) => {
+    const slug = String(req.body?.slug || '');
+    if (!WEBHOOK_SLUGS.includes(slug)) return res.status(400).json({ error: 'אינטגרציה לא נתמכת' });
+    const t = await prisma.tenant.findUnique({ where: { id: req.tenantId }, select: { name: true, integrationConfig: true } });
+    const c = (t?.integrationConfig && typeof t.integrationConfig === 'object' ? t.integrationConfig : {})[slug];
+    if (!c?.url) return res.status(400).json({ error: 'לא הוגדרה כתובת webhook' });
+    const payload = {
+      event: 'test',
+      tenant: { id: req.tenantId, name: t?.name || '' },
+      contact: { name: 'לקוח לדוגמה', phone: '972500000001' },
+      message: 'זוהי הודעת בדיקה מ-HeyIL ✅',
+      ts: new Date().toISOString(),
+    };
+    const result = await deliverToUrl({ url: c.url, secret: c.secret, payload });
+    if (result.ok) return res.json({ ok: true, status: result.status });
+    return res.status(502).json({ ok: false, status: result.status || null, error: result.error || 'delivery_failed' });
   })
 );
 
@@ -350,6 +437,11 @@ router.put(
     // Never let a not-ready integration be switched on — it would be a dead toggle.
     if (enabled && !isIntegrationReady(slug)) {
       return res.status(400).json({ error: 'האינטגרציה עדיין לא זמינה' });
+    }
+    // URL-configurable integrations are connected via /integrations/webhook (needs a URL),
+    // not this plain on/off toggle.
+    if (enabled && isConfigurable(slug)) {
+      return res.status(400).json({ error: 'יש להזין כתובת webhook כדי להתחבר' });
     }
 
     const current = readIntegrations(req.tenant);

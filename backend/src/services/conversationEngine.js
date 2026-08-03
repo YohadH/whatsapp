@@ -7,6 +7,7 @@ import { hasCredits, chargeAiCredit, markLowCreditNudge } from '../lib/credits.j
 import { trackEvent, EVENTS } from './analytics.js';
 import { computeLeadScore } from './leadScore.js';
 import { notifyOwnerHandoff } from './handoffNotify.js';
+import { deliverLeadEvent } from './outboundWebhook.js';
 
 // A URL-based image is downloaded by WhatsApp before delivery, so it can lag
 // behind a small voice note sent right after. This short pause (only when a
@@ -225,6 +226,13 @@ export async function handleIncomingMessage({ tenant, phone, text, name, rawPayl
       conversationId: conversation.id,
       customerId: customer.id,
       customerPhone: phone,
+    });
+    // New lead → notify any configured outbound webhook (Webhook/CRM, Zapier/Make).
+    // Fire-and-forget: never blocks the reply pipeline.
+    deliverLeadEvent(tenantId, 'lead.created', {
+      contact: { name: customer.name || null, phone: customer.phone || phone },
+      conversationId: conversation.id,
+      firstMessage: text,
     });
   }
 
@@ -571,6 +579,13 @@ export async function handleIncomingMessage({ tenant, phone, text, name, rawPayl
         tenant,
         conversation: { ...conversation, whatsappPhone: phone, lastMessage: text },
         customer: { name: customer.name, phone: customer.phone || phone },
+      });
+      // Handoff → also fire the outbound webhook (fire-and-forget).
+      deliverLeadEvent(tenantId, 'lead.needs_human', {
+        contact: { name: customer.name || null, phone: customer.phone || phone },
+        conversationId: conversation.id,
+        lastMessage: text,
+        leadScore,
       });
     }
   } else {

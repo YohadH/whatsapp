@@ -105,6 +105,13 @@ model Tenant {
   // Nullable/additive (MIGRATION 10_tenant_integrations) — code treats null as {}.
   integrations Json?
 
+  // ── Integration connection config (outbound webhook targets) ──
+  // Per-slug config for URL-based integrations, e.g.
+  //   { webhook: { url, secret }, zapier: { url, secret }, calendly: { url } }
+  // The `secret` is used to HMAC-sign outbound webhook bodies (X-HeyIL-Signature).
+  // Nullable/additive (MIGRATION 15_integration_config) — code treats null as {}.
+  integrationConfig Json?
+
   // ── Tenant AI provider (BYO key — Phase 3.1, DORMANT until enabled) ──
   // When aiProvider+aiApiKeyEnc are set the agent runs on the tenant's own key
   // (openai | anthropic); otherwise the platform OpenAI key + credits apply.

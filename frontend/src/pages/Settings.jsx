@@ -325,6 +325,7 @@ function BusinessProfile() {
 function Integrations({ google }) {
   const [catalog, setCatalog] = useState(null);
   const [enabled, setEnabled] = useState({});
+  const [config, setConfig] = useState({});
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -333,11 +334,11 @@ function Integrations({ google }) {
   // `null` = still loading → don't badge yet (avoid a flash of "locked").
   const googleEntitled = google == null ? null : Boolean(google.enabled);
 
-  useEffect(() => {
+  const reload = () =>
     api.get('/api/settings/integrations')
-      .then((r) => { setCatalog(r.data.catalog); setEnabled(r.data.enabled || {}); })
+      .then((r) => { setCatalog(r.data.catalog); setEnabled(r.data.enabled || {}); setConfig(r.data.config || {}); })
       .catch(() => setCatalog([]));
-  }, []);
+  useEffect(() => { reload(); }, []);
 
   async function toggle(slug, group) {
     const nextVal = !enabled[slug];
@@ -372,11 +373,18 @@ function Integrations({ google }) {
       {(() => {
         // Only present integrations that are actually usable now; the rest are
         // shown as a muted "בקרוב" (coming soon) list so no dead toggles appear.
-        const readyItems = catalog.filter((it) => it.ready);
+        // URL-configurable ones (webhook/zapier) render a connect form.
+        const configItems = catalog.filter((it) => it.ready && it.configurable);
+        const toggleItems = catalog.filter((it) => it.ready && !it.configurable);
+        const readyItems = toggleItems; // toggle rows
         const soonItems = catalog.filter((it) => !it.ready);
         return (
           <>
-            {readyItems.length > 0 ? (
+            {configItems.map((it) => (
+              <WebhookConfig key={it.slug} item={it} icon={ICONS[it.slug]} config={config[it.slug]} onChanged={reload} />
+            ))}
+
+            {readyItems.length > 0 && (
               <ul className="divide-y divide-slate-100">
                 {readyItems.map((it) => {
                   const locked = it.group === 'google' && googleEntitled === false;
@@ -401,7 +409,8 @@ function Integrations({ google }) {
                   );
                 })}
               </ul>
-            ) : (
+            )}
+            {configItems.length === 0 && toggleItems.length === 0 && (
               <div className="rounded-lg bg-slate-50 text-slate-500 text-sm p-3">
                 עדיין אין אינטגרציות פעילות לחשבון שלכם — נוסיף חיבורים בקרוב 👇
               </div>
@@ -429,6 +438,87 @@ function Integrations({ google }) {
           </>
         );
       })()}
+    </div>
+  );
+}
+
+// Connect form for a URL-based integration (Webhook/CRM, Zapier/Make): paste an
+// HTTPS endpoint (+ optional signing secret), save, send a live test, disconnect.
+function WebhookConfig({ item, icon, config, onChanged }) {
+  const connected = !!config?.url;
+  const [url, setUrl] = useState(config?.url || '');
+  const [secret, setSecret] = useState('');
+  const [open, setOpen] = useState(connected);
+  const [busy, setBusy] = useState('');
+  const [test, setTest] = useState(null);
+  const [err, setErr] = useState('');
+
+  useEffect(() => { setUrl(config?.url || ''); }, [config?.url]);
+
+  async function save() {
+    setBusy('save'); setErr(''); setTest(null);
+    try {
+      await api.put('/api/settings/integrations/webhook', { slug: item.slug, url: url.trim(), secret: secret.trim() || undefined });
+      setSecret('');
+      onChanged();
+    } catch (e) { setErr(e.response?.data?.error || 'שמירה נכשלה'); }
+    finally { setBusy(''); }
+  }
+  async function disconnect() {
+    setBusy('disc'); setErr(''); setTest(null);
+    try { await api.put('/api/settings/integrations/webhook', { slug: item.slug, url: '' }); setUrl(''); onChanged(); }
+    catch (e) { setErr(e.response?.data?.error || 'ניתוק נכשל'); }
+    finally { setBusy(''); }
+  }
+  async function runTest() {
+    setBusy('test'); setTest(null); setErr('');
+    try { const r = await api.post('/api/settings/integrations/webhook/test', { slug: item.slug }); setTest({ ok: true, status: r.data.status }); }
+    catch (e) { setTest({ ok: false, msg: e.response?.data?.error || 'הבדיקה נכשלה', status: e.response?.data?.status }); }
+    finally { setBusy(''); }
+  }
+
+  return (
+    <div className="border border-slate-200 rounded-xl p-3 mb-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="text-xl shrink-0" aria-hidden>{icon || '🔗'}</span>
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-slate-800 flex items-center gap-2">
+              {item.label}
+              {connected && <span className="badge bg-green-100 text-green-700 text-[10px] font-medium">● מחובר</span>}
+            </div>
+            <div className="text-xs text-slate-500 truncate">{item.desc}</div>
+          </div>
+        </div>
+        <button className="btn-ghost text-sm shrink-0" onClick={() => setOpen((o) => !o)}>
+          {open ? 'סגירה' : connected ? 'ניהול' : 'חיבור'}
+        </button>
+      </div>
+
+      {open && (
+        <div className="mt-3 space-y-2 border-t border-slate-100 pt-3">
+          <div>
+            <label className="label">כתובת ה-Webhook (HTTPS)</label>
+            <input className="input" dir="ltr" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://hooks.zapier.com/…" />
+          </div>
+          <div>
+            <label className="label">סוד לחתימה (אופציונלי)</label>
+            <input className="input" dir="ltr" type="password" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder={config?.hasSecret ? '•••••• (שמור — הזינו כדי להחליף)' : 'לחתימת X-HeyIL-Signature'} />
+            <p className="text-xs text-slate-400 mt-1">בכל ליד חדש נשלח POST עם פרטי הליד. אם הוגדר סוד, נחתום את הגוף ב-HMAC-SHA256.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button className="btn-primary" disabled={busy === 'save' || !url.trim()} onClick={save}>{busy === 'save' ? 'שומר…' : 'שמירה'}</button>
+            {connected && <button className="btn-ghost" disabled={busy === 'test'} onClick={runTest}>{busy === 'test' ? 'בודק…' : 'שליחת בדיקה'}</button>}
+            {connected && <button className="btn-ghost text-red-600 mr-auto" disabled={busy === 'disc'} onClick={disconnect}>{busy === 'disc' ? '…' : 'ניתוק'}</button>}
+          </div>
+          {test && (
+            <div className={`text-sm rounded-lg p-2 ${test.ok ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
+              {test.ok ? `✓ נשלח בהצלחה (HTTP ${test.status})` : `✗ ${test.msg}${test.status ? ` (HTTP ${test.status})` : ''}`}
+            </div>
+          )}
+          {err && <div className="text-sm text-red-600">{err}</div>}
+        </div>
+      )}
     </div>
   );
 }
