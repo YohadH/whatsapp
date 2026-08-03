@@ -2,6 +2,31 @@ import { useEffect, useState } from 'react';
 import api from '../api/client.js';
 import { PageHeader } from '../components/Layout.jsx';
 import { Spinner, Modal, EmptyState, ErrorState, errMsg } from '../components/ui.jsx';
+import { FLOW_TEMPLATES, FLOW_TEMPLATE_CATEGORIES } from '../data/flowTemplates.js';
+
+// Convert a flow template into the shape FlowEditor expects (questions carry an
+// `optionsText` mirror + orderIndex; triggerWords stay an array). No id → the
+// editor treats it as new and POSTs on save.
+function templateToFlow(t) {
+  return {
+    name: t.title,
+    description: t.description || '',
+    triggerWords: t.triggerWords || [],
+    finalMessage: t.finalMessage || '',
+    sendFinalMessage: true,
+    linkId: '',
+    isActive: true,
+    isDefault: false,
+    questions: (t.questions || []).map((q, i) => ({
+      questionText: q.questionText,
+      questionType: q.questionType || 'text',
+      options: q.options || [],
+      optionsText: (q.options || []).join(', '),
+      isRequired: q.isRequired ?? true,
+      orderIndex: i,
+    })),
+  };
+}
 
 const QUESTION_TYPES = [
   { value: 'text', label: 'טקסט' },
@@ -31,6 +56,7 @@ export default function Flows() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [editing, setEditing] = useState(null);
+  const [showGallery, setShowGallery] = useState(false);
 
   function load() {
     setLoading(true);
@@ -60,7 +86,12 @@ export default function Flows() {
       <PageHeader
         title="תהליכים"
         subtitle="שאלות מוגדרות מראש שהסוכן שואל את הלקוחות"
-        actions={<button className="btn-primary" onClick={() => setEditing(emptyFlow())}>+ תהליך חדש</button>}
+        actions={
+          <div className="flex gap-2">
+            <button className="btn-ghost" onClick={() => setShowGallery(true)}>✨ ספריית תבניות</button>
+            <button className="btn-primary" onClick={() => setEditing(emptyFlow())}>+ תהליך חדש</button>
+          </div>
+        }
       />
 
       {loading ? (
@@ -68,7 +99,13 @@ export default function Flows() {
       ) : error ? (
         <ErrorState message={error} onRetry={load} />
       ) : flows.length === 0 ? (
-        <EmptyState>עדיין אין תהליכים. צרו את הראשון!</EmptyState>
+        <EmptyState>
+          עדיין אין תהליכים.{' '}
+          <button className="text-brand-600 font-medium hover:underline" onClick={() => setShowGallery(true)}>
+            בחרו תבנית מוכנה
+          </button>{' '}
+          או צרו תהליך חדש!
+        </EmptyState>
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
           {flows.map((flow) => (
@@ -111,9 +148,148 @@ export default function Flows() {
           }}
         />
       )}
+
+      {showGallery && (
+        <FlowTemplateGallery
+          onClose={() => setShowGallery(false)}
+          onPick={(t) => {
+            setShowGallery(false);
+            setEditing(templateToFlow(t));
+          }}
+        />
+      )}
     </div>
   );
 }
+
+// Gallery of ready-made flows (SmartSend-style): category chips, a card grid, and
+// a live WhatsApp-style phone preview of the selected template's questions.
+function FlowTemplateGallery({ onClose, onPick }) {
+  const [cat, setCat] = useState('all');
+  const [selected, setSelected] = useState(FLOW_TEMPLATES[0]);
+  const list = cat === 'all' ? FLOW_TEMPLATES : FLOW_TEMPLATES.filter((t) => t.category === cat);
+
+  return (
+    <Modal open onClose={onClose} title="ספריית תבניות תהליכים" wide>
+      <p className="text-sm text-gray-500 -mt-2 mb-3">בחרו תבנית מוכנה — היא תיפתח לעריכה כך שתוכלו להתאים אותה לעסק שלכם.</p>
+      <div className="flex flex-wrap gap-2 mb-4">
+        {FLOW_TEMPLATE_CATEGORIES.map((c) => (
+          <button
+            key={c.id}
+            onClick={() => setCat(c.id)}
+            className={`px-3 py-1.5 rounded-full text-sm transition ${
+              cat === c.id ? 'bg-brand-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+          >
+            {c.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="grid md:grid-cols-[1fr_300px] gap-5">
+        {/* Cards */}
+        <div className="grid sm:grid-cols-2 gap-3 max-h-[60vh] overflow-y-auto pl-1">
+          {list.map((t) => (
+            <button
+              key={t.key}
+              onMouseEnter={() => setSelected(t)}
+              onFocus={() => setSelected(t)}
+              onClick={() => setSelected(t)}
+              className={`text-right border rounded-xl p-4 transition hover:shadow-md ${
+                selected?.key === t.key ? 'border-brand-500 ring-1 ring-brand-500 bg-brand-50/40' : 'border-slate-200'
+              }`}
+            >
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-2xl">{t.icon}</span>
+                <span className="font-semibold">{t.title}</span>
+              </div>
+              <p className="text-xs text-slate-500 leading-relaxed">{t.description}</p>
+              <div className="text-[11px] text-slate-400 mt-2">{t.questions.length} שאלות</div>
+            </button>
+          ))}
+        </div>
+
+        {/* Live phone preview */}
+        <div className="hidden md:block">
+          <div className="sticky top-0">
+            <PhonePreview template={selected} />
+            <button className="btn-primary w-full mt-3" onClick={() => onPick(selected)}>
+              השתמשו בתבנית זו
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Mobile: pick button under the list */}
+      <div className="md:hidden mt-4">
+        <button className="btn-primary w-full" onClick={() => onPick(selected)}>השתמשו ב"{selected?.title}"</button>
+      </div>
+    </Modal>
+  );
+}
+
+// WhatsApp-style preview: renders each flow question as an incoming (business)
+// bubble, with a sample customer reply between them, so the owner sees the flow.
+function PhonePreview({ template }) {
+  if (!template) return null;
+  return (
+    <div className="rounded-2xl bg-[#0b141a] p-2 shadow-lg">
+      <div className="rounded-t-xl bg-[#075E54] text-white px-3 py-2 flex items-center gap-2">
+        <span className="h-7 w-7 rounded-full bg-white/20 grid place-items-center text-sm">{template.icon}</span>
+        <div className="text-sm font-medium leading-none">{template.title}</div>
+      </div>
+      <div
+        className="px-2.5 py-3 space-y-2 max-h-[52vh] overflow-y-auto"
+        style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'20\' height=\'20\'%3E%3Crect width=\'20\' height=\'20\' fill=\'%23ece5dd\'/%3E%3C/svg%3E")' }}
+      >
+        {template.questions.map((q, i) => (
+          <div key={i} className="space-y-2">
+            {/* Business asks (incoming bubble — white, right side in RTL) */}
+            <div className="flex">
+              <div className="bg-white rounded-lg rounded-tr-none px-2.5 py-1.5 text-[13px] text-slate-800 shadow-sm max-w-[85%] whitespace-pre-wrap">
+                {q.questionText}
+                {Array.isArray(q.options) && q.options.length > 0 && (
+                  <div className="mt-1.5 space-y-1">
+                    {q.options.map((o) => (
+                      <div key={o} className="border-t border-slate-100 pt-1 text-brand-600 text-center text-xs">{o}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+            {/* Sample customer reply (outgoing bubble — green, left side in RTL) */}
+            {i < template.questions.length - 1 && (
+              <div className="flex justify-end">
+                <div className="bg-[#dcf8c6] rounded-lg rounded-tl-none px-2.5 py-1.5 text-[13px] text-slate-800 shadow-sm">
+                  {SAMPLE_REPLIES[q.questionType] || '…'}
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+        {template.finalMessage && (
+          <div className="flex">
+            <div className="bg-white rounded-lg rounded-tr-none px-2.5 py-1.5 text-[13px] text-slate-800 shadow-sm max-w-[85%]">
+              {template.finalMessage}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Plausible sample answers per question type, used only in the preview.
+const SAMPLE_REPLIES = {
+  text: 'דנה כהן',
+  phone: '050-1234567',
+  email: 'dana@email.com',
+  number: '2',
+  date: '12/08',
+  single_choice: '✅',
+  multiple_choice: '✅',
+  yes_no: 'כן',
+};
 
 function FlowEditor({ initial, links, onClose, onSaved }) {
   const isNew = !initial.id;
