@@ -12,9 +12,11 @@ import { downloadAndCache } from './media.js';
 // agent: download + cache the image, extract the fields with the vision model,
 // persist an Expense row, and confirm back to the owner over WhatsApp.
 //
-// Owner recognition: Tenant.ownerPhone (digits-only), falling back to the global
-// HANDOFF_NOTIFY_PHONE. Matching is suffix-tolerant so "0501234567" and
-// "972501234567" describe the same phone.
+// Owner recognition: Tenant.ownerPhone (digits-only). The global
+// HANDOFF_NOTIFY_PHONE is a last-resort default that applies ONLY when the tenant
+// has NOT configured its own ownerPhone — it never also matches for a tenant that
+// has one (that would misattribute across tenants). Matching is suffix-tolerant so
+// "0501234567" and "972501234567" describe the same phone.
 // ─────────────────────────────────────────────────────────────
 
 const openai = config.openai.enabled ? new OpenAI({ apiKey: config.openai.apiKey }) : null;
@@ -34,8 +36,15 @@ function samePhone(a, b) {
   return sa.length === 9 && sa === db.slice(-9);
 }
 
+// Owner recognition is TENANT-SCOPED. When the tenant has configured its own
+// ownerPhone, ONLY that number counts — the global HANDOFF_NOTIFY_PHONE must NOT
+// also match, or one tenant's receipts get misattributed to the global number
+// across every tenant (cross-tenant leak). The global env is a last-resort
+// default ONLY for tenants that have not configured an ownerPhone of their own.
 export function isOwnerPhone(tenant, phone) {
-  return samePhone(tenant?.ownerPhone, phone) || samePhone(config.handoff.notifyPhone, phone);
+  const tenantOwner = digits(tenant?.ownerPhone);
+  if (tenantOwner) return samePhone(tenantOwner, phone);
+  return samePhone(config.handoff.notifyPhone, phone);
 }
 
 // Vision extraction. Returns the parsed fields (nulls where unreadable) — never throws
