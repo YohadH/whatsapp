@@ -369,30 +369,66 @@ function Integrations({ google }) {
       <p className="text-sm text-gray-500 mb-4">הפעילו או כבו חיבורים למערכות חיצוניות — אפשר לערוך בכל רגע.</p>
       {error && <div className="rounded-lg bg-red-50 text-red-600 text-sm p-3 mb-3">{error}</div>}
       {notice && <div className="rounded-lg bg-amber-50 text-amber-700 text-sm p-3 mb-3">{notice}</div>}
-      <ul className="divide-y divide-slate-100">
-        {catalog.map((it) => {
-          const locked = it.group === 'google' && googleEntitled === false;
-          return (
-            <li key={it.slug} className="flex items-center justify-between gap-4 py-3">
-              <div className="flex items-center gap-3 min-w-0">
-                <span className="text-xl shrink-0" aria-hidden>{ICONS[it.slug] || '🔌'}</span>
-                <div className="min-w-0">
-                  <div className="text-sm font-medium text-slate-800 flex items-center gap-2">
-                    {it.label}
-                    {locked && (
-                      <span className="badge bg-amber-100 text-amber-700 text-[10px] font-medium" title="דורש הפעלת תוסף Google בתשלום על ידי מנהל המערכת">
-                        🔒 תוסף בתשלום
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-xs text-slate-500 truncate">{it.desc}</div>
-                </div>
+      {(() => {
+        // Only present integrations that are actually usable now; the rest are
+        // shown as a muted "בקרוב" (coming soon) list so no dead toggles appear.
+        const readyItems = catalog.filter((it) => it.ready);
+        const soonItems = catalog.filter((it) => !it.ready);
+        return (
+          <>
+            {readyItems.length > 0 ? (
+              <ul className="divide-y divide-slate-100">
+                {readyItems.map((it) => {
+                  const locked = it.group === 'google' && googleEntitled === false;
+                  return (
+                    <li key={it.slug} className="flex items-center justify-between gap-4 py-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="text-xl shrink-0" aria-hidden>{ICONS[it.slug] || '🔌'}</span>
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium text-slate-800 flex items-center gap-2">
+                            {it.label}
+                            {locked && (
+                              <span className="badge bg-amber-100 text-amber-700 text-[10px] font-medium" title="דורש הפעלת תוסף Google בתשלום על ידי מנהל המערכת">
+                                🔒 תוסף בתשלום
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs text-slate-500 truncate">{it.desc}</div>
+                        </div>
+                      </div>
+                      <Toggle on={!!enabled[it.slug]} busy={busy === it.slug} onClick={() => toggle(it.slug, it.group)} label={it.label} />
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <div className="rounded-lg bg-slate-50 text-slate-500 text-sm p-3">
+                עדיין אין אינטגרציות פעילות לחשבון שלכם — נוסיף חיבורים בקרוב 👇
               </div>
-              <Toggle on={!!enabled[it.slug]} busy={busy === it.slug} onClick={() => toggle(it.slug, it.group)} label={it.label} />
-            </li>
-          );
-        })}
-      </ul>
+            )}
+
+            {soonItems.length > 0 && (
+              <div className="mt-5">
+                <div className="text-xs font-semibold text-slate-400 mb-2">בקרוב</div>
+                <ul className="divide-y divide-slate-100">
+                  {soonItems.map((it) => (
+                    <li key={it.slug} className="flex items-center justify-between gap-4 py-3 opacity-70">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="text-xl shrink-0 grayscale" aria-hidden>{ICONS[it.slug] || '🔌'}</span>
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium text-slate-700">{it.label}</div>
+                          <div className="text-xs text-slate-400 truncate">{it.desc}</div>
+                        </div>
+                      </div>
+                      <span className="badge bg-slate-100 text-slate-500 text-[10px] font-medium shrink-0">בקרוב</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </>
+        );
+      })()}
     </div>
   );
 }
@@ -424,24 +460,10 @@ function GoogleConnect({ status, reload }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
-  // Still loading the status → render nothing yet (avoids a flash of the locked card).
-  if (!status) return null;
-
-  // Not entitled to the paid add-on → show an explicit locked state, not silence.
-  if (!status.enabled) {
-    return (
-      <div className="card mt-4">
-        <h3 className="font-semibold mb-3">Google (Gmail + יומן) — תוסף</h3>
-        <div className="rounded-lg bg-amber-50 text-amber-700 text-sm p-3">
-          🔒 תוסף Google (בתשלום) עדיין לא הופעל לחשבון שלכם. הוא מאפשר יצירת אירועי
-          יומן ושליחת מיילים אוטומטית מתוך השיחה. פנו למנהל המערכת כדי להפעיל אותו.
-        </div>
-        {status.notMigrated && (
-          <p className="text-xs text-amber-500 mt-2">התוסף עדיין לא הופעל בשרת (נדרשת הפעלת מיגרציה).</p>
-        )}
-      </div>
-    );
-  }
+  // Show this panel only when Google is actually READY to connect (the paid add-on
+  // is enabled for this tenant). Until then it lives in the Integrations "בקרוב"
+  // list, so we don't present a connect button that would just 403.
+  if (!status || !status.enabled) return null;
 
   async function connect() {
     setError(''); setBusy(true);

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import prisma from '../lib/prisma.js';
+import config from '../config/index.js';
 import { asyncHandler } from '../middleware/error.js';
 import { encryptSecret } from '../lib/crypto.js';
 import { checkToken } from '../services/whatsapp.js';
@@ -303,6 +304,25 @@ const INTEGRATION_CATALOG = [
 ];
 const CATALOG_SLUGS = new Set(INTEGRATION_CATALOG.map((i) => i.slug));
 
+// Whether an integration is actually usable RIGHT NOW (built + platform-configured),
+// so the UI only presents connectable integrations and never a dead toggle:
+//   - Google group (gmail/calendar/sheets): real OAuth exists but is usable only when
+//     the platform has Google OAuth app credentials (config.google.enabled). The
+//     per-tenant paid add-on is a further gate handled by the GoogleConnect panel.
+//   - webhook / calendly / zapier: connection flow not built yet → not ready ("בקרוב").
+// Update a slug here the moment its connect flow ships.
+function isIntegrationReady(slug) {
+  if (['gmail', 'calendar', 'sheets'].includes(slug)) return Boolean(config.google.enabled);
+  return false;
+}
+// Catalog annotated with per-item readiness (+ a Hebrew status hint for not-ready).
+function catalogWithReadiness() {
+  return INTEGRATION_CATALOG.map((it) => {
+    const ready = isIntegrationReady(it.slug);
+    return { ...it, ready, statusNote: ready ? null : 'בקרוב' };
+  });
+}
+
 // Normalize the stored JSON (which may be null, or hold stale slugs) into a clean
 // { slug: boolean } map covering exactly the current catalog.
 function readIntegrations(tenant) {
@@ -312,11 +332,11 @@ function readIntegrations(tenant) {
   return out;
 }
 
-// GET /api/settings/integrations → catalog + this tenant's enabled map.
+// GET /api/settings/integrations → catalog (with readiness) + this tenant's enabled map.
 router.get(
   '/integrations',
   asyncHandler(async (req, res) => {
-    res.json({ catalog: INTEGRATION_CATALOG, enabled: readIntegrations(req.tenant) });
+    res.json({ catalog: catalogWithReadiness(), enabled: readIntegrations(req.tenant) });
   })
 );
 
@@ -327,6 +347,10 @@ router.put(
     const slug = String(req.body?.slug || '');
     const enabled = req.body?.enabled === true;
     if (!CATALOG_SLUGS.has(slug)) return res.status(400).json({ error: 'אינטגרציה לא מוכרת' });
+    // Never let a not-ready integration be switched on — it would be a dead toggle.
+    if (enabled && !isIntegrationReady(slug)) {
+      return res.status(400).json({ error: 'האינטגרציה עדיין לא זמינה' });
+    }
 
     const current = readIntegrations(req.tenant);
     const next = { ...current, [slug]: enabled };
