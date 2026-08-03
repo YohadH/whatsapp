@@ -44,6 +44,7 @@ model Tenant {
 
   // ── Branding / localization ──
   displayName String?
+  logoUrl     String? // business logo/avatar (public URL from /api/uploads/image). Nullable/additive.
   bioTitle    String?
   bioSubtitle String?
   locale      String  @default("he")

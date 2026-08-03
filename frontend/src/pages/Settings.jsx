@@ -4,9 +4,20 @@ import { PageHeader } from '../components/Layout.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { launchEmbeddedSignup } from '../lib/fbEmbeddedSignup.js';
 
+// Settings sections — surfaced as a side nav (desktop) / scrollable tab bar
+// (mobile). Keeps a long page organized and works on iPhone + Android.
+const SECTIONS = [
+  { id: 'general', label: 'כללי', icon: '🏢' },
+  { id: 'whatsapp', label: 'WhatsApp', icon: '📱' },
+  { id: 'ai', label: 'בינה מלאכותית', icon: '✨' },
+  { id: 'integrations', label: 'אינטגרציות', icon: '🔌' },
+  { id: 'test', label: 'בדיקת הסוכן', icon: '🧪' },
+];
+
 export default function Settings() {
   const { user } = useAuth();
   const [health, setHealth] = useState(null);
+  const [section, setSection] = useState('general');
   // Google add-on entitlement state (Tenant.googleIntegrationEnabled — the PAID
   // gate, flipped ONLY by a super-admin). Fetched once here and shared by both the
   // Integrations list (to badge the Google-group toggles) and the GoogleConnect
@@ -28,35 +39,76 @@ export default function Settings() {
     <div>
       <PageHeader title="הגדרות" subtitle="חיבורים, חשבון, ובדיקת הסוכן" />
 
-      <div className="grid lg:grid-cols-2 gap-4">
-        <div className="card">
-          <h3 className="font-semibold mb-3">סטטוס חיבורים</h3>
-          <ul className="text-sm space-y-2">
-            <Status label="שרת" ok={!!health} text={health ? 'מחובר' : 'לא זמין'} />
-            <Status label="OpenAI" ok={health?.openai} text={health?.openai ? 'פעיל' : 'כבוי (מצב חוקים)'} />
-            <Status label="WhatsApp Cloud API" ok={health?.whatsapp} text={health?.whatsapp ? 'פעיל' : 'כבוי (סימולטור)'} />
-          </ul>
-          <p className="text-xs text-gray-400 mt-4">
-            את מפתחות ה-API מגדירים בקובץ <code>backend/.env</code> (OPENAI_API_KEY, WHATSAPP_TOKEN…).
-          </p>
-        </div>
+      <div className="md:grid md:grid-cols-[210px_1fr] md:gap-6">
+        {/* Section nav: horizontal scroll on mobile, sticky vertical list on desktop */}
+        <nav className="flex md:flex-col gap-1.5 overflow-x-auto md:overflow-visible pb-2 md:pb-0 mb-4 md:mb-0 md:sticky md:top-4 md:self-start -mx-1 px-1">
+          {SECTIONS.map((s) => (
+            <button
+              key={s.id}
+              onClick={() => setSection(s.id)}
+              className={`shrink-0 flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-sm text-right whitespace-nowrap transition ${
+                section === s.id
+                  ? 'bg-brand-500 text-white font-medium shadow-sm'
+                  : 'bg-white md:bg-transparent text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <span aria-hidden>{s.icon}</span>
+              {s.label}
+            </button>
+          ))}
+        </nav>
 
-        <div className="card">
-          <h3 className="font-semibold mb-3">חשבון</h3>
-          <dl className="text-sm space-y-2">
-            <div className="flex justify-between"><dt className="text-gray-500">שם</dt><dd>{user?.name}</dd></div>
-            <div className="flex justify-between"><dt className="text-gray-500">אימייל</dt><dd>{user?.email}</dd></div>
-            <div className="flex justify-between"><dt className="text-gray-500">תפקיד</dt><dd>{user?.role}</dd></div>
-          </dl>
+        <div className="min-w-0">
+          {section === 'general' && (
+            <>
+              <BusinessProfile />
+              <AccountCard user={user} />
+            </>
+          )}
+          {section === 'whatsapp' && (
+            <>
+              <WhatsAppConnect />
+              <ServerStatus health={health} />
+            </>
+          )}
+          {section === 'ai' && <AiProvider />}
+          {section === 'integrations' && (
+            <>
+              <Integrations google={google} />
+              <GoogleConnect status={google} reload={loadGoogle} />
+            </>
+          )}
+          {section === 'test' && <Simulator />}
         </div>
       </div>
+    </div>
+  );
+}
 
-      <BusinessProfile />
-      <AiProvider />
-      <WhatsAppConnect />
-      <Integrations google={google} />
-      <GoogleConnect status={google} reload={loadGoogle} />
-      <Simulator />
+// Server/connection status card (WhatsApp section).
+function ServerStatus({ health }) {
+  return (
+    <div className="card mt-4">
+      <h3 className="font-semibold mb-3">סטטוס חיבורים</h3>
+      <ul className="text-sm space-y-2">
+        <Status label="שרת" ok={!!health} text={health ? 'מחובר' : 'לא זמין'} />
+        <Status label="OpenAI" ok={health?.openai} text={health?.openai ? 'פעיל' : 'כבוי (מצב חוקים)'} />
+        <Status label="WhatsApp Cloud API" ok={health?.whatsapp} text={health?.whatsapp ? 'פעיל' : 'כבוי (סימולטור)'} />
+      </ul>
+    </div>
+  );
+}
+
+// Logged-in account details (general section).
+function AccountCard({ user }) {
+  return (
+    <div className="card mt-4">
+      <h3 className="font-semibold mb-3">חשבון</h3>
+      <dl className="text-sm space-y-2">
+        <div className="flex justify-between"><dt className="text-gray-500">שם</dt><dd>{user?.name}</dd></div>
+        <div className="flex justify-between"><dt className="text-gray-500">אימייל</dt><dd>{user?.email}</dd></div>
+        <div className="flex justify-between"><dt className="text-gray-500">תפקיד</dt><dd>{user?.role}</dd></div>
+      </dl>
     </div>
   );
 }
@@ -163,15 +215,41 @@ function AiProvider() {
 function BusinessProfile() {
   const [name, setName] = useState('');
   const [ownerPhone, setOwnerPhone] = useState('');
+  const [logoUrl, setLogoUrl] = useState('');
+  const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [err, setErr] = useState('');
 
   useEffect(() => {
     api.get('/api/settings/profile')
-      .then((r) => { setName(r.data.name || ''); setOwnerPhone(r.data.ownerPhone || ''); })
+      .then((r) => { setName(r.data.name || ''); setOwnerPhone(r.data.ownerPhone || ''); setLogoUrl(r.data.logoUrl || ''); })
       .catch(() => {});
   }, []);
+
+  // Upload the picked image, then persist the returned URL immediately so the logo
+  // sticks even if the owner never presses "save" on the rest of the form.
+  async function pickLogo(file) {
+    if (!file) return;
+    setErr('');
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const up = await api.post('/api/uploads/image', fd);
+      const url = up.data.url;
+      setLogoUrl(url);
+      await api.put('/api/settings/profile', { name: name.trim() || 'העסק שלי', logoUrl: url });
+    } catch (ex) {
+      setErr(ex.response?.data?.error || 'העלאת הלוגו נכשלה');
+    } finally {
+      setUploading(false);
+    }
+  }
+  async function removeLogo() {
+    setLogoUrl('');
+    try { await api.put('/api/settings/profile', { name: name.trim() || 'העסק שלי', logoUrl: '' }); } catch { /* ignore */ }
+  }
 
   async function save(e) {
     e.preventDefault();
@@ -179,7 +257,7 @@ function BusinessProfile() {
     setSaved(false);
     setSaving(true);
     try {
-      const r = await api.put('/api/settings/profile', { name: name.trim(), ownerPhone: ownerPhone.trim() });
+      const r = await api.put('/api/settings/profile', { name: name.trim(), ownerPhone: ownerPhone.trim(), logoUrl });
       setOwnerPhone(r.data.ownerPhone || '');
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
@@ -194,8 +272,30 @@ function BusinessProfile() {
     <div className="card mt-4">
       <h3 className="font-semibold mb-1">פרטי העסק</h3>
       <p className="text-xs text-slate-400 mb-4">
-        🧾 מהמספר האישי של בעל/ת העסק אפשר לצלם קבלות ישירות לוואטסאפ של העסק — הן ייקלטו אוטומטית בעמוד <b>הוצאות</b>.
+        השם והלוגו מייצגים את העסק בפני הלקוחות. 🧾 מהמספר האישי של בעל/ת העסק אפשר לצלם קבלות ישירות לוואטסאפ — הן ייקלטו אוטומטית בעמוד <b>הוצאות</b>.
       </p>
+
+      {/* Logo uploader */}
+      <div className="flex items-center gap-4 mb-4">
+        <div className="h-20 w-20 rounded-2xl border border-dashed border-slate-300 bg-slate-50 grid place-items-center overflow-hidden shrink-0">
+          {logoUrl ? (
+            <img src={logoUrl} alt="לוגו" className="h-full w-full object-cover" />
+          ) : (
+            <span className="text-2xl text-slate-300">🏢</span>
+          )}
+        </div>
+        <div className="text-sm">
+          <label className="btn-ghost cursor-pointer inline-block">
+            {uploading ? 'מעלה…' : logoUrl ? 'החלפת לוגו' : 'העלאת לוגו'}
+            <input type="file" accept="image/*" className="hidden" disabled={uploading} onChange={(e) => pickLogo(e.target.files?.[0])} />
+          </label>
+          {logoUrl && (
+            <button type="button" className="btn-ghost text-red-600 mr-1" onClick={removeLogo}>הסרה</button>
+          )}
+          <p className="text-xs text-slate-400 mt-1">JPG/PNG, עד 5MB · מומלץ ריבוע</p>
+        </div>
+      </div>
+
       <form onSubmit={save} className="grid sm:grid-cols-2 gap-3 items-end max-w-2xl">
         <div>
           <label className="label">שם העסק</label>
@@ -461,6 +561,20 @@ function WhatsAppConnect() {
     }
   }
 
+  async function disconnect() {
+    if (!confirm('לנתק את מספר ה-WhatsApp? הנתונים שלכם (שיחות, לידים, תהליכים) יישָמרו במלואם — רק החיבור ינותק ותוכלו לחבר מחדש בכל רגע.')) return;
+    setError(''); setConnecting(true);
+    try {
+      await api.post('/api/settings/whatsapp/disconnect');
+      setVerify(null);
+      load();
+    } catch (err) {
+      setError(err.response?.data?.error || 'הניתוק נכשל');
+    } finally {
+      setConnecting(false);
+    }
+  }
+
   const esConfigured = state?.embeddedSignup?.configured;
   const numbering = state?.platformNumbering;
 
@@ -479,8 +593,11 @@ function WhatsAppConnect() {
       ) : (
         <>
           {state?.connected ? (
-            <div className="rounded-lg bg-green-50 text-green-700 text-sm p-3 mb-3">
-              ● מחובר — מספר: <span className="font-mono">{state.phoneNumberId}</span>
+            <div className="rounded-lg bg-green-50 text-green-700 text-sm p-3 mb-3 flex items-center justify-between gap-3 flex-wrap">
+              <span>● מחובר — מספר: <span className="font-mono">{state.phoneNumberId}</span></span>
+              <button className="btn-ghost text-red-600 text-sm" disabled={connecting} onClick={disconnect}>
+                {connecting ? '…' : 'ניתוק'}
+              </button>
             </div>
           ) : (
             <div className="rounded-lg bg-gray-50 text-gray-600 text-sm p-3 mb-3">

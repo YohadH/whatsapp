@@ -40,12 +40,12 @@ router.get(
 router.get(
   '/profile',
   asyncHandler(async (req, res) => {
-    // req.tenant comes from TENANT_SELECT (no name); read the two fields directly.
+    // req.tenant comes from TENANT_SELECT (no name); read the fields directly.
     const t = await prisma.tenant.findUnique({
       where: { id: req.tenantId },
-      select: { name: true, ownerPhone: true },
+      select: { name: true, ownerPhone: true, logoUrl: true },
     });
-    res.json({ name: t?.name || '', ownerPhone: t?.ownerPhone || '' });
+    res.json({ name: t?.name || '', ownerPhone: t?.ownerPhone || '', logoUrl: t?.logoUrl || '' });
   })
 );
 
@@ -64,8 +64,17 @@ router.put(
       }
       data.ownerPhone = digits || null;
     }
+    // logoUrl (optional): a public image URL (from /api/uploads/image); empty clears it.
+    if ('logoUrl' in (req.body || {})) {
+      const url = String(req.body.logoUrl || '').trim();
+      if (url && !/^https?:\/\//i.test(url)) {
+        return res.status(400).json({ error: 'כתובת הלוגו אינה תקינה' });
+      }
+      if (url.length > 500) return res.status(400).json({ error: 'כתובת הלוגו ארוכה מדי' });
+      data.logoUrl = url || null;
+    }
     const t = await prisma.tenant.update({ where: { id: req.tenantId }, data });
-    res.json({ name: t.name, ownerPhone: t.ownerPhone || '' });
+    res.json({ name: t.name, ownerPhone: t.ownerPhone || '', logoUrl: t.logoUrl || '' });
   })
 );
 
@@ -248,6 +257,26 @@ router.post(
   '/whatsapp/verify',
   asyncHandler(async (req, res) => {
     res.json(await checkToken(tenantWhatsAppCreds(req.tenant)));
+  })
+);
+
+// POST /api/settings/whatsapp/disconnect → detach the WhatsApp number from this
+// tenant. Clears ONLY the credentials (token/phone/WABA/PIN) so the agent drops
+// back to simulator mode — it deletes NO customer data: conversations, leads,
+// flows, expenses and knowledge base all stay untouched, ready for reconnect.
+router.post(
+  '/whatsapp/disconnect',
+  asyncHandler(async (req, res) => {
+    await prisma.tenant.update({
+      where: { id: req.tenantId },
+      data: {
+        waTokenEnc: null,
+        waPhoneNumberId: null,
+        waBusinessAccountId: null,
+        waPin: null,
+      },
+    });
+    res.json({ connected: false });
   })
 );
 
