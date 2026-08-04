@@ -66,7 +66,15 @@ async function postOnce(url, body, secret) {
   try {
     const headers = { 'Content-Type': 'application/json', 'User-Agent': 'HeyIL-Webhook/1' };
     if (secret) headers['X-HeyIL-Signature'] = sign(secret, body);
-    const res = await fetch(url, { method: 'POST', headers, body, signal: ac.signal });
+    // redirect:'manual' — do NOT follow 3xx. The redirect TARGET is never
+    // re-validated by isSafeWebhookUrl(), so a public webhook that answers
+    // `302 Location: http://127.0.0.1:...` (or a metadata/internal URL) would
+    // otherwise let undici's default redirect-following turn this into an SSRF.
+    // A 3xx is treated as a FAILED delivery, not a success.
+    const res = await fetch(url, { method: 'POST', headers, body, signal: ac.signal, redirect: 'manual' });
+    if (res.status >= 300 && res.status < 400) {
+      return { ok: false, status: res.status, error: 'redirect_not_followed' };
+    }
     return { ok: res.ok, status: res.status };
   } finally {
     clearTimeout(timer);
