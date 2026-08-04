@@ -86,6 +86,17 @@ export default function Settings() {
   );
 }
 
+// Shared card-shaped loader, so a settings section shows a spinner and then its
+// full content at once (no fields/lists popping in after the page renders).
+function CardLoader({ label = 'טוען…' }) {
+  return (
+    <div className="card mt-4 flex flex-col items-center justify-center gap-3 py-16 text-slate-400 text-sm">
+      <span className="inline-block h-7 w-7 rounded-full border-2 border-slate-200 border-t-brand-500 animate-spin" />
+      {label}
+    </div>
+  );
+}
+
 // Server/connection status card (WhatsApp section).
 function ServerStatus({ health }) {
   return (
@@ -126,12 +137,13 @@ function AiProvider() {
   const [saved, setSaved] = useState(false);
   const [err, setErr] = useState('');
 
+  const [loading, setLoading] = useState(true);
   const load = () =>
     api.get('/api/settings/ai').then((r) => {
       setCfg(r.data);
       setProvider(r.data.provider || 'platform');
       setModel(r.data.model || '');
-    }).catch(() => {});
+    }).catch(() => {}).finally(() => setLoading(false));
   useEffect(() => { load(); }, []);
 
   function pickProvider(p) {
@@ -158,6 +170,7 @@ function AiProvider() {
     }
   }
 
+  if (loading) return <CardLoader />;
   const providers = cfg?.providers || {};
   const models = provider !== 'platform' ? providers[provider]?.models || [] : [];
 
@@ -221,11 +234,13 @@ function BusinessProfile() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [err, setErr] = useState('');
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     api.get('/api/settings/profile')
       .then((r) => { setName(r.data.name || ''); setOwnerPhone(r.data.ownerPhone || ''); setLogoUrl(r.data.logoUrl || ''); })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, []);
 
   // Upload the picked image, then persist the returned URL immediately so the logo
@@ -269,6 +284,7 @@ function BusinessProfile() {
     }
   }
 
+  if (loading) return <CardLoader />;
   return (
     <div className="card mt-4">
       <h3 className="font-semibold mb-1">פרטי העסק</h3>
@@ -362,7 +378,7 @@ function Integrations({ google }) {
     }
   }
 
-  if (!catalog) return null;
+  if (!catalog) return <CardLoader />;
   const ICONS = { gmail: '📧', calendar: '📅', sheets: '📊', webhook: '🔗', calendly: '🗓️', zapier: '⚡' };
 
   return (
