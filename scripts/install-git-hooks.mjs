@@ -88,6 +88,49 @@ echo "" >&2
 exit 1
 `;
 
+// commit-msg hook body. WARN ONLY — never blocks (always exit 0), matching the
+// existing pre-commit TOCTOU advisory pattern (deliberately not '|| exit 1'). It
+// nudges toward linking each commit to a board card: if the commit SUBJECT carries
+// no board-id-shaped token (an UPPERCASE hyphen-joined token like WA-DEV-STRIPE /
+// BUG-WA-002 / AP-T72), it prints a reminder to add a board id or a `Board:` trailer.
+//
+// WHY warn-only and not a hard gate (CTO decision 2026-08-04,
+// whatsapp-agent-wa-process-gate-board-commit-link): docs/memory/hook commits
+// legitimately have no card, and a hard block just trains agents to `--no-verify`.
+// The real safety net is the board⇄git reconciliation job in D:/AgentsTeam
+// (scripts/reconcile-board-commits.mjs), which auto-files a review card for any
+// orphan CODE commit after the fact. This nudge is the cheap preventive complement.
+//
+// Git invokes:  commit-msg <path-to-commit-message-file>
+const COMMIT_MSG_HOOK = `#!/bin/sh
+# Auto-installed by scripts/install-git-hooks.mjs.
+# WARN ONLY board-id nudge — NEVER blocks (always exits 0). A commit whose subject
+# has no board-id token gets a reminder, not a rejection. The board⇄git reconcile
+# job (D:/AgentsTeam scripts/reconcile-board-commits.mjs) is the real backstop.
+msg_file="$1"
+[ -f "$msg_file" ] || exit 0
+subject="$(sed -n '1p' "$msg_file")"
+# Skip merge/revert/fixup subjects — they inherit their linkage from the target.
+case "$subject" in
+  Merge*|Revert*|"fixup!"*|"squash!"*) exit 0 ;;
+esac
+# A board-id token: 2+ uppercase, at least one internal hyphen (WA-DEV-STRIPE, AP-T72).
+# Also accept an explicit 'Board:' trailer anywhere in the message.
+if printf '%s' "$subject" | grep -Eq '[A-Z]{2,}[A-Z0-9]*(-[A-Z0-9]+)+'; then
+  exit 0
+fi
+if grep -Eiq '^board:' "$msg_file"; then
+  exit 0
+fi
+echo "" >&2
+echo "ℹ commit-msg: no board-id token in the subject (advisory — commit NOT blocked)." >&2
+echo "  Consider naming the board card, e.g.  fix(x): … (WA-DEV-FOO)  or add a trailer:" >&2
+echo "      Board: whatsapp-agent-<card-id>" >&2
+echo "  Docs/memory/chore commits legitimately have no card — ignore this if so." >&2
+echo "" >&2
+exit 0
+`;
+
 // Install one hook idempotently. `foreignMarker` is a substring that identifies
 // OUR managed hook; if an existing hook lacks it, we refuse to clobber a
 // human/foreign hook and print manual instructions instead.
@@ -139,6 +182,15 @@ function main() {
     'pre-push BLOCKED',
     'To enforce the "commit locally only" policy, make it: exit 1 on push\n' +
       '  (human bypass: git push --no-verify).',
+  );
+
+  installHook(
+    hooksDir,
+    'commit-msg',
+    COMMIT_MSG_HOOK,
+    'commit-msg: no board-id token',
+    'Add a warn-only board-id nudge (never blocks) to it manually, or see\n' +
+      '  COMMIT_MSG_HOOK in this file.',
   );
 
   process.exit(0);
