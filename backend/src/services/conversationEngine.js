@@ -130,57 +130,35 @@ export async function handleIncomingMessage({ tenant, phone, text, name, rawPayl
     create: { tenantId, phone, name: name || null },
   });
 
-  // 2) Conversation (reuse an open one, else start fresh)
+  // 2) ONE conversation per customer — a single WhatsApp-style thread per phone.
+  // Reuse the customer's existing conversation (reopening/resetting it as needed);
+  // only a brand-new customer gets a freshly created conversation. This is what
+  // stops a "duplicate" conversation row from accumulating per session for one
+  // number — the inbox shows one thread per contact, like WhatsApp itself.
   let conversation = await prisma.conversation.findFirst({
-    where: { tenantId, customerId: customer.id, status: { in: ['active', 'needs_human'] } },
-    orderBy: { createdAt: 'desc' },
+    where: { tenantId, customerId: customer.id },
+    orderBy: { lastActivityAt: 'desc' },
     select: CONVERSATION_ENGINE_SELECT,
   });
 
-  // 2-stale) 24h idle → restart the bot's process on this thread: clear the flow
-  // pointers (no resuming a days-old mid-flow question) and hand the thread back
-  // to the bot (needs_human that nobody picked up must not stay stuck forever).
-  // History and previously collected answers are kept — only the STATE resets.
-  if (
-    conversation?.lastActivityAt &&
-    Date.now() - new Date(conversation.lastActivityAt).getTime() > STALE_CONVERSATION_MS
-  ) {
-    conversation = await prisma.conversation.update({
-      where: { id: conversation.id },
-      data: { currentFlowId: null, currentQuestionId: null, status: 'active', needsHuman: false },
-      select: CONVERSATION_ENGINE_SELECT,
-    });
-  }
+  if (conversation) {
+    const idleMs = conversation.lastActivityAt
+      ? Date.now() - new Date(conversation.lastActivityAt).getTime()
+      : Infinity;
+    const flowCompleted = conversation.status === 'completed' && conversation.currentFlowId != null;
 
-  // 2a) "One & done": if there's no open conversation but this customer already
-  // COMPLETED A FLOW recently, stay silent — record the inbound message (so it's
-  // visible in the dashboard) and bump activity, but don't reply or restart a flow.
-  // Scoped to conversations that actually ran a flow (currentFlowId set), so plain
-  // chit-chat the AI happens to mark "completed" doesn't silence the customer.
-  // TIME-BOXED to 24h (lastActivityAt gte): a lead who returns after a day of
-  // quiet falls through this guard and gets a brand-new conversation — the bot
-  // restarts its process instead of ignoring them forever.
-  if (!conversation) {
-    const completed = await prisma.conversation.findFirst({
-      where: {
-        tenantId,
-        customerId: customer.id,
-        status: 'completed',
-        currentFlowId: { not: null },
-        lastActivityAt: { gte: new Date(Date.now() - STALE_CONVERSATION_MS) },
-      },
-      orderBy: { createdAt: 'desc' },
-      select: CONVERSATION_ENGINE_SELECT,
-    });
-    if (completed) {
-      // Atomic dedup gate: if a concurrent delivery of this waMessageId already
-      // stored the inbound message, this create throws P2002 → treat as duplicate
-      // and stop (this path is already silent, so there's nothing more to do).
+    // 2a) "One & done": completed a FLOW within 24h → record the inbound message
+    // (so it's visible in the dashboard) and stay silent — don't re-run the flow.
+    // History and collected answers are kept. Scoped to flow-completed threads so
+    // plain chit-chat the AI marked "completed" doesn't silence the customer.
+    if (flowCompleted && idleMs <= STALE_CONVERSATION_MS) {
+      // Atomic dedup gate: a concurrent same-waMessageId delivery that already
+      // stored this message makes the create throw P2002 → treat as duplicate.
       try {
         await prisma.message.create({
           data: {
             tenantId,
-            conversationId: completed.id,
+            conversationId: conversation.id,
             senderType: 'customer',
             messageText: text,
             waMessageId: waMessageId || null,
@@ -194,18 +172,38 @@ export async function handleIncomingMessage({ tenant, phone, text, name, rawPayl
         throw err;
       }
       await prisma.conversation.update({
-        where: { id: completed.id },
+        where: { id: conversation.id },
         data: { lastMessage: text, lastActivityAt: new Date() },
         select: { id: true }, // drift-safe: don't RETURNING the unmigrated window cols (AP-T71)
       });
       await trackEvent(EVENTS.MESSAGE_RECEIVED, {
         tenantId,
-        conversationId: completed.id,
+        conversationId: conversation.id,
         customerId: customer.id,
         customerPhone: phone,
         metadata: { text, suppressed: true },
       });
-      return { conversation: completed, agentResponse: null, replySent: false, isNew: false, suppressed: true };
+      return { conversation, agentResponse: null, replySent: false, isNew: false, suppressed: true };
+    }
+
+    // 2-stale) 24h idle → restart the bot's process on this thread: clear the flow
+    // pointers (no resuming a days-old mid-flow question) and hand it back to the
+    // bot. History/answers are kept — only the STATE resets.
+    if (idleMs > STALE_CONVERSATION_MS) {
+      conversation = await prisma.conversation.update({
+        where: { id: conversation.id },
+        data: { currentFlowId: null, currentQuestionId: null, status: 'active', needsHuman: false },
+        select: CONVERSATION_ENGINE_SELECT,
+      });
+    } else if (conversation.status !== 'active' && conversation.status !== 'needs_human') {
+      // Reopen a completed/abandoned thread (within 24h) so the bot engages again in
+      // the SAME thread instead of spawning a new one. Keep the flow pointers — only
+      // the stale path above clears them.
+      conversation = await prisma.conversation.update({
+        where: { id: conversation.id },
+        data: { status: 'active', needsHuman: false },
+        select: CONVERSATION_ENGINE_SELECT,
+      });
     }
   }
 
