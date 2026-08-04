@@ -102,14 +102,21 @@ export default function Layout({ children }) {
               <path d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           </button>
-          <div className="flex-1 min-w-0 text-center font-semibold truncate px-1">
+          {/* Business name → dashboard */}
+          <button
+            onClick={() => navigate('/dashboard')}
+            className="flex-1 min-w-0 text-center font-semibold truncate px-1 hover:text-white/80 transition"
+          >
             {biz.name || (isSuperAdmin ? 'קונסולת פלטפורמה' : '')}
-          </div>
+          </button>
+          {/* Logo → settings */}
+          <button onClick={() => navigate('/settings')} className="shrink-0" aria-label="הגדרות">
           {biz.logoUrl ? (
             <img src={biz.logoUrl} alt={biz.name} className="h-9 w-9 shrink-0 rounded-lg object-cover ring-1 ring-white/20" />
           ) : (
             <img src="/brand/logo-mark-512.png" alt="HeyIL" className="h-9 w-9 shrink-0 rounded-lg ring-1 ring-white/15" />
           )}
+          </button>
         </div>
 
         {/* Super-admin "acting as tenant" banner. */}

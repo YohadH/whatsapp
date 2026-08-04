@@ -793,11 +793,15 @@ function Simulator() {
   const [sending, setSending] = useState(false);
   const [flows, setFlows] = useState([]);
   const [flowId, setFlowId] = useState(''); // '' = automatic (match by trigger words)
+  const [loading, setLoading] = useState(true); // gate the whole body until flows load (no pop-in)
   const endRef = useRef(null);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
   useEffect(() => {
-    api.get('/api/flows').then((r) => setFlows((r.data || []).filter((f) => f.isActive))).catch(() => {});
+    api.get('/api/flows')
+      .then((r) => setFlows((r.data || []).filter((f) => f.isActive)))
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, []);
 
   // Pick a flow to force-test → start a clean thread (fresh test number + cleared chat).
@@ -835,6 +839,13 @@ function Simulator() {
       <h3 className="font-semibold mb-1">🧪 סימולטור סוכן</h3>
       <p className="text-sm text-gray-500 mb-3">בדקו את הסוכן בדיוק כמו לקוח אמיתי — הוא עונה מתוך <b>מאגר הידע</b>, <b>התהליכים</b> ו<b>מנוע הבינה</b> שהגדרתם. ההודעות נשמרות גם תחת "שיחות".</p>
 
+      {loading ? (
+        <div className="flex flex-col items-center justify-center gap-3 py-20 text-slate-400 text-sm">
+          <span className="inline-block h-7 w-7 rounded-full border-2 border-slate-200 border-t-brand-500 animate-spin" />
+          טוען את הסימולטור…
+        </div>
+      ) : (
+      <>
       <div className="flex items-center gap-2 mb-3 flex-wrap">
         {flows.length > 0 && (
           <>
@@ -881,6 +892,8 @@ function Simulator() {
           <button className="btn-primary" disabled={sending}>{sending ? '…' : 'שליחה'}</button>
         </form>
       </div>
+      </>
+      )}
     </div>
   );
 }
