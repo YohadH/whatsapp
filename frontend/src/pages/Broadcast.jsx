@@ -395,12 +395,13 @@ export default function Broadcast() {
 
       {/* Template gallery — every template with its content + Meta approval status */}
       <div className="card mb-4">
-        <div className="flex items-center justify-between mb-3 gap-2">
-          <div>
+        {/* Stack on mobile so the title/subtitle get the full width (buttons wrap below). */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-3 gap-3 sm:gap-2">
+          <div className="w-full min-w-0">
             <h3 className="font-semibold">התבניות שלי</h3>
             <p className="text-xs text-slate-400 mt-0.5">הסטטוס מגיע ישירות מ-Meta — רק תבנית <b>מאושרת</b> ניתנת לשליחה.</p>
           </div>
-          <div className="flex gap-2 shrink-0">
+          <div className="flex gap-2 shrink-0 flex-wrap">
             <button type="button" className="btn-ghost text-xs" disabled={tplRefreshing} onClick={refreshTemplates}>
               {tplRefreshing ? 'מרענן…' : '↻ רענון סטטוס'}
             </button>

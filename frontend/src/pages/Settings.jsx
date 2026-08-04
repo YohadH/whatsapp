@@ -40,8 +40,9 @@ export default function Settings() {
       <PageHeader title="הגדרות" subtitle="חיבורים, חשבון, ובדיקת הסוכן" />
 
       <div className="md:grid md:grid-cols-[210px_1fr] md:gap-6">
-        {/* Section nav: horizontal scroll on mobile, sticky vertical list on desktop */}
-        <nav className="flex md:flex-col gap-1.5 overflow-x-auto md:overflow-visible pb-2 md:pb-0 mb-4 md:mb-0 md:sticky md:top-4 md:self-start -mx-1 px-1">
+        {/* Section nav: wraps onto multiple rows on mobile (no horizontal scroll),
+            sticky vertical list on desktop. */}
+        <nav className="flex flex-wrap md:flex-col gap-1.5 mb-4 md:mb-0 md:sticky md:top-4 md:self-start">
           {SECTIONS.map((s) => (
             <button
               key={s.id}
