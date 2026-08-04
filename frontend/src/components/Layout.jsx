@@ -128,9 +128,11 @@ export default function Layout({ children }) {
 }
 
 export function PageHeader({ title, subtitle, actions }) {
+  // Stack on mobile so the title/subtitle get the FULL width (actions drop below),
+  // instead of the title being squeezed next to the action buttons.
   return (
-    <div className="flex items-start justify-between mb-6 gap-4">
-      <div>
+    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between mb-6 gap-3 sm:gap-4">
+      <div className="min-w-0 w-full">
         <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">{title}</h1>
         {subtitle && <p className="text-sm text-slate-500 mt-1">{subtitle}</p>}
       </div>

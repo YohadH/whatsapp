@@ -130,21 +130,25 @@ export default function Onboarding() {
 
   return (
     <div dir="rtl" className="min-h-screen flex flex-col lg:flex-row bg-slate-50">
-      {/* ── Dark brand panel (inline-start = right in RTL) ── */}
-      <aside className="lg:w-[44%] shrink-0 bg-heyil-dark text-white flex flex-col p-8 lg:p-12">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <div className="text-xs font-semibold tracking-widest text-brand-300 mb-3">הצטרפות · 3 שלבים</div>
-            <h1 className="text-2xl lg:text-3xl font-bold leading-snug">נבנה יחד את חשבון ה-WhatsApp המקצועי שלך.</h1>
-            <p className="text-white/60 mt-2 text-sm">2 דקות עד שיחה ראשונה. לא צריך לשנות מספר, לא צריך מפתח.</p>
+      {/* ── Dark brand panel (inline-start = right in RTL). Compact on mobile
+          (full-width heading + a slim step pill) so the form is visible without
+          scrolling; the full step list + logo footer show on desktop only. ── */}
+      <aside className="lg:w-[44%] shrink-0 bg-heyil-dark text-white flex flex-col p-5 lg:p-12">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 w-full">
+            <div className="text-[11px] lg:text-xs font-semibold tracking-widest text-brand-300 mb-1.5 lg:mb-3">
+              הצטרפות · שלב {step} מתוך 3
+            </div>
+            <h1 className="text-xl lg:text-3xl font-bold leading-snug">נבנה יחד את חשבון ה-WhatsApp המקצועי שלך.</h1>
+            <p className="hidden lg:block text-white/60 mt-2 text-sm">2 דקות עד שיחה ראשונה. לא צריך לשנות מספר, לא צריך מפתח.</p>
           </div>
-          <Link to="/dashboard" className="shrink-0 text-xs bg-white/10 hover:bg-white/20 transition rounded-full px-4 py-2 whitespace-nowrap">
-            ← חזרה לדשבורד
+          <Link to="/dashboard" className="shrink-0 text-[11px] lg:text-xs bg-white/10 hover:bg-white/20 transition rounded-full px-3 py-1.5 lg:px-4 lg:py-2 whitespace-nowrap">
+            ← לדשבורד
           </Link>
         </div>
 
-        {/* step list */}
-        <ol className="mt-10 space-y-3">
+        {/* step list — desktop only (mobile uses the "שלב X מתוך 3" pill above) */}
+        <ol className="hidden lg:block mt-10 space-y-3">
           {STEPS.map((s) => (
             <li
               key={s.n}
@@ -164,7 +168,7 @@ export default function Onboarding() {
           ))}
         </ol>
 
-        <div className="mt-auto pt-10">
+        <div className="hidden lg:block mt-auto pt-10">
           <img src="/brand/logo-transparent-dark.png" alt="HeyIL" className="h-20 w-auto mb-3" />
           <div className="text-[11px] tracking-widest text-white/40 font-semibold">
             OFFICIAL WHATSAPP API · META BUSINESS
@@ -278,10 +282,11 @@ export default function Onboarding() {
               )}
 
               {err && <div className="text-sm text-red-600 bg-red-50 rounded-lg p-2.5 mb-4">{err}</div>}
-              <div className="flex items-center gap-4">
-                <button className="btn-primary px-8" disabled={saving} onClick={continueStep2}>המשך ←</button>
-                <button className="text-sm text-slate-400 hover:text-slate-600" onClick={() => setStep(1)}>→ חזרה</button>
-                <button className="text-sm text-slate-400 hover:text-slate-600 ms-auto" onClick={() => navigate('/dashboard')}>דלגו ואחברו אחר כך</button>
+              {/* Constant positions: חזרה (right/start) · דלגו (center) · המשך (left/end). */}
+              <div className="grid grid-cols-3 items-center gap-2">
+                <button className="justify-self-start text-sm text-slate-400 hover:text-slate-600" onClick={() => setStep(1)}>→ חזרה</button>
+                <button className="justify-self-center text-sm text-slate-400 hover:text-slate-600" onClick={() => navigate('/dashboard')}>דלגו</button>
+                <button className="justify-self-end btn-primary px-6" disabled={saving} onClick={continueStep2}>המשך ←</button>
               </div>
             </>
           )}
