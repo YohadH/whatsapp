@@ -62,11 +62,13 @@ router.get(
 router.get(
   '/',
   asyncHandler(async (req, res) => {
-    const { status, needsHuman, search } = req.query;
+    const { status, needsHuman, search, includeTest } = req.query;
     const page = Math.max(1, parseInt(req.query.page || '1', 10));
     const pageSize = Math.min(100, parseInt(req.query.pageSize || '25', 10));
 
+    // Hide simulator/test conversations from the inbox by default (?includeTest=1 to show).
     const where = { tenantId: req.tenantId };
+    if (includeTest !== '1' && includeTest !== 'true') where.isTest = false;
     if (status) where.status = status;
     if (needsHuman !== undefined) where.needsHuman = needsHuman === 'true';
     if (search) {

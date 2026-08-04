@@ -99,7 +99,7 @@ function awayAlreadySentRecently(history, awayMessage) {
  * of a specific tenant. `tenant` is the full Tenant row (its WhatsApp creds are
  * used to reply). Returns { conversation, agentResponse, replySent }.
  */
-export async function handleIncomingMessage({ tenant, phone: rawPhone, text, name, rawPayload, waMessageId, forceFlowId }) {
+export async function handleIncomingMessage({ tenant, phone: rawPhone, text, name, rawPayload, waMessageId, forceFlowId, simulated }) {
   if (!tenant?.id) throw new Error('handleIncomingMessage requires a tenant');
   const tenantId = tenant.id;
   const creds = tenantWhatsAppCreds(tenant);
@@ -232,7 +232,8 @@ export async function handleIncomingMessage({ tenant, phone: rawPhone, text, nam
     // reply/charge path (the message-create gate at step 3 still lets exactly one
     // win), but the loser's empty row is cleaned up in that gate's P2002 catch below.
     conversation = await prisma.conversation.create({
-      data: { tenantId, customerId: customer.id, whatsappPhone: phone, status: 'active' },
+      // isTest marks simulator threads so they stay out of the real inbox.
+      data: { tenantId, customerId: customer.id, whatsappPhone: phone, status: 'active', isTest: !!simulated },
       select: CONVERSATION_ENGINE_SELECT, // drift-safe (AP-T71): don't RETURNING window cols
     });
     isNew = true;

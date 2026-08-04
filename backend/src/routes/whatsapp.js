@@ -198,8 +198,9 @@ router.post(
     // So the simulator runs for any authenticated tenant; it just replies in simulator
     // mode (logs instead of sending) when no number is connected.
     if (await handleOptOut(req.tenant, phone, text)) return res.json({ optedOut: true });
-    // `flowId` (optional, simulator only): force-test a specific flow.
-    const result = await handleIncomingMessage({ tenant: req.tenant, phone, text, name, forceFlowId: flowId || undefined });
+    // `flowId` (optional, simulator only): force-test a specific flow. `simulated`
+    // flags the thread as a test so it's hidden from the real inbox.
+    const result = await handleIncomingMessage({ tenant: req.tenant, phone, text, name, forceFlowId: flowId || undefined, simulated: true });
     res.json(result);
   })
 );

@@ -398,6 +398,9 @@ model Conversation {
   currentFlowId     String?
   currentQuestionId String?
   needsHuman        Boolean  @default(false)
+  // Simulator/test conversations (created via /api/whatsapp/simulate) — hidden from
+  // the real inbox so agent-testing chatter doesn't pollute it. Additive/nullable-safe.
+  isTest            Boolean  @default(false)
   lastMessage       String?
   leadScore         Int      @default(0)
   linkSent          Boolean  @default(false)
