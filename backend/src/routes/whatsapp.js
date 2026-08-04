@@ -184,7 +184,7 @@ router.post(
   requireAuth,
   withTenant,
   asyncHandler(async (req, res) => {
-    const { phone, text, name } = req.body || {};
+    const { phone, text, name, flowId } = req.body || {};
     if (!phone || !text) return res.status(400).json({ error: 'phone and text are required' });
     // A trial customer must be able to TEST the agent (see real answers from their
     // own knowledge base / flows / AI) before connecting WhatsApp — that's the whole
@@ -198,7 +198,8 @@ router.post(
     // So the simulator runs for any authenticated tenant; it just replies in simulator
     // mode (logs instead of sending) when no number is connected.
     if (await handleOptOut(req.tenant, phone, text)) return res.json({ optedOut: true });
-    const result = await handleIncomingMessage({ tenant: req.tenant, phone, text, name });
+    // `flowId` (optional, simulator only): force-test a specific flow.
+    const result = await handleIncomingMessage({ tenant: req.tenant, phone, text, name, forceFlowId: flowId || undefined });
     res.json(result);
   })
 );

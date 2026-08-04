@@ -791,9 +791,21 @@ function Simulator() {
   const [text, setText] = useState('');
   const [messages, setMessages] = useState([]);
   const [sending, setSending] = useState(false);
+  const [flows, setFlows] = useState([]);
+  const [flowId, setFlowId] = useState(''); // '' = automatic (match by trigger words)
   const endRef = useRef(null);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+  useEffect(() => {
+    api.get('/api/flows').then((r) => setFlows((r.data || []).filter((f) => f.isActive))).catch(() => {});
+  }, []);
+
+  // Pick a flow to force-test → start a clean thread (fresh test number + cleared chat).
+  function pickFlow(id) {
+    setFlowId(id);
+    setMessages([]);
+    if (id) setPhone(`9725000000${String(10 + Math.floor((Date.now() / 1000) % 89)).padStart(2, '0')}`);
+  }
 
   async function send(e) {
     e.preventDefault();
@@ -803,7 +815,7 @@ function Simulator() {
     setText('');
     setSending(true);
     try {
-      const res = await api.post('/api/whatsapp/simulate', { phone, text: userMsg });
+      const res = await api.post('/api/whatsapp/simulate', { phone, text: userMsg, flowId: flowId || undefined });
       const ar = res.data.agentResponse;
       if (ar?.reply) {
         // Show HOW the agent answered: ✨ AI (used the LLM) vs 🤖 automatic (rule/flow).
@@ -824,10 +836,26 @@ function Simulator() {
       <p className="text-sm text-gray-500 mb-3">בדקו את הסוכן בדיוק כמו לקוח אמיתי — הוא עונה מתוך <b>מאגר הידע</b>, <b>התהליכים</b> ו<b>מנוע הבינה</b> שהגדרתם. ההודעות נשמרות גם תחת "שיחות".</p>
 
       <div className="flex items-center gap-2 mb-3 flex-wrap">
-        <label className="text-sm text-gray-500">טלפון לקוח לבדיקה:</label>
-        <input className="input w-48" dir="ltr" value={phone} onChange={(e) => setPhone(e.target.value)} />
+        {flows.length > 0 && (
+          <>
+            <label className="text-sm text-gray-500">תהליך לבדיקה:</label>
+            <select className="input w-56" value={flowId} onChange={(e) => pickFlow(e.target.value)}>
+              <option value="">אוטומטי (לפי מילות הפעלה)</option>
+              {flows.map((f) => (
+                <option key={f.id} value={f.id}>{f.name}</option>
+              ))}
+            </select>
+          </>
+        )}
+        <label className="text-sm text-gray-500">טלפון לבדיקה:</label>
+        <input className="input w-40" dir="ltr" value={phone} onChange={(e) => setPhone(e.target.value)} />
         <button className="btn-ghost" onClick={() => setMessages([])}>איפוס</button>
       </div>
+      {flowId && (
+        <div className="text-xs text-brand-600 bg-brand-50 rounded-lg p-2 mb-3">
+          🔀 בדיקת התהליך <b>{flows.find((f) => f.id === flowId)?.name}</b> — שלחו הודעה כלשהי כדי להתחיל אותו מההתחלה.
+        </div>
+      )}
 
       <div className="border rounded-xl bg-gray-50 flex flex-col" style={{ height: 420 }}>
         <div className="flex-1 overflow-y-auto p-4 space-y-2">

@@ -99,7 +99,7 @@ function awayAlreadySentRecently(history, awayMessage) {
  * of a specific tenant. `tenant` is the full Tenant row (its WhatsApp creds are
  * used to reply). Returns { conversation, agentResponse, replySent }.
  */
-export async function handleIncomingMessage({ tenant, phone: rawPhone, text, name, rawPayload, waMessageId }) {
+export async function handleIncomingMessage({ tenant, phone: rawPhone, text, name, rawPayload, waMessageId, forceFlowId }) {
   if (!tenant?.id) throw new Error('handleIncomingMessage requires a tenant');
   const tenantId = tenant.id;
   const creds = tenantWhatsAppCreds(tenant);
@@ -157,7 +157,7 @@ export async function handleIncomingMessage({ tenant, phone: rawPhone, text, nam
     // (so it's visible in the dashboard) and stay silent — don't re-run the flow.
     // History and collected answers are kept. Scoped to flow-completed threads so
     // plain chit-chat the AI marked "completed" doesn't silence the customer.
-    if (flowCompleted && idleMs <= STALE_CONVERSATION_MS) {
+    if (!forceFlowId && flowCompleted && idleMs <= STALE_CONVERSATION_MS) {
       // Atomic dedup gate: a concurrent same-waMessageId delivery that already
       // stored this message makes the create throw P2002 → treat as duplicate.
       try {
@@ -208,6 +208,17 @@ export async function handleIncomingMessage({ tenant, phone: rawPhone, text, nam
       conversation = await prisma.conversation.update({
         where: { id: conversation.id },
         data: { status: 'active', needsHuman: false },
+        select: CONVERSATION_ENGINE_SELECT,
+      });
+    }
+
+    // Simulator: when a specific flow is force-selected, clear any prior flow state
+    // so the chosen flow starts FRESH from its first question — even if a previous
+    // flow was mid-run or completed on this test thread.
+    if (forceFlowId && conversation.currentFlowId) {
+      conversation = await prisma.conversation.update({
+        where: { id: conversation.id },
+        data: { currentFlowId: null, currentQuestionId: null, status: 'active', needsHuman: false },
         select: CONVERSATION_ENGINE_SELECT,
       });
     }
@@ -378,10 +389,18 @@ export async function handleIncomingMessage({ tenant, phone: rawPhone, text, nam
   //  2) a "default" flow (isDefault) that starts on ANY message (e.g. "hey").
   let suggestedFlow = null;
   if (!conversation.currentFlowId) {
-    const lc = text.toLowerCase();
-    const matched = flows.find((fl) => fl.triggerWords?.some((w) => w && lc.includes(String(w).toLowerCase())));
-    const fallback = matched || flows.find((fl) => fl.isDefault);
-    if (fallback) suggestedFlow = { id: fallback.id, name: fallback.name };
+    // Simulator: `forceFlowId` explicitly picks the flow to test, bypassing
+    // trigger-word matching (only ever set by /simulate — the webhook path is
+    // unaffected). Falls back to normal matching if the id isn't a tenant flow.
+    const forced = forceFlowId ? flows.find((fl) => fl.id === forceFlowId) : null;
+    if (forced) {
+      suggestedFlow = { id: forced.id, name: forced.name };
+    } else {
+      const lc = text.toLowerCase();
+      const matched = flows.find((fl) => fl.triggerWords?.some((w) => w && lc.includes(String(w).toLowerCase())));
+      const fallback = matched || flows.find((fl) => fl.isDefault);
+      if (fallback) suggestedFlow = { id: fallback.id, name: fallback.name };
+    }
   }
 
   const ctx = {
