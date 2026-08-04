@@ -9,6 +9,35 @@ import { computeLeadScore } from './leadScore.js';
 import { notifyOwnerHandoff } from './handoffNotify.js';
 import { deliverLeadEvent } from './outboundWebhook.js';
 import { normalizePhone } from '../lib/phone.js';
+import { createCalendarEvent } from './googleIntegration.js';
+
+// Create a Google Calendar event from an agent-extracted booking. BEST-EFFORT and
+// fire-and-forget: if the Calendar integration isn't configured/enabled/connected,
+// createCalendarEvent throws a GoogleIntegrationError we swallow — so this is a
+// no-op until the tenant connects Google, and it NEVER blocks or breaks a reply.
+function bookCalendarBestEffort(tenantId, ev, customer) {
+  try {
+    if (!ev?.start) return;
+    const start = ev.start;
+    const end = ev.end || new Date(new Date(start).getTime() + 60 * 60 * 1000).toISOString();
+    createCalendarEvent(tenantId, {
+      summary: ev.summary || `תור — ${customer?.name || customer?.phone || 'לקוח'}`,
+      description: `נקבע אוטומטית על ידי הסוכן.\nלקוח: ${customer?.name || ''} ${customer?.phone || ''}`.trim(),
+      start,
+      end,
+      timeZone: ev.timeZone || 'Asia/Jerusalem',
+    })
+      .then((r) => console.log(`[calendar ${tenantId}] event created: ${r.id}`))
+      .catch((e) => {
+        // Silent for the expected "not live" gates; log anything unexpected.
+        if (!['not_configured', 'not_enabled', 'not_connected', 'token_corrupt'].includes(e?.code)) {
+          console.error(`[calendar ${tenantId}] create failed:`, e?.message);
+        }
+      });
+  } catch (e) {
+    console.error(`[calendar ${tenantId}] booking hook error:`, e?.message);
+  }
+}
 
 // A URL-based image is downloaded by WhatsApp before delivery, so it can lag
 // behind a small voice note sent right after. This short pause (only when a
@@ -562,6 +591,13 @@ export async function handleIncomingMessage({ tenant, phone: rawPhone, text, nam
     status: agentResponse.conversation_status,
   });
   agentResponse.lead_score = leadScore;
+
+  // Google Calendar: if the agent confirmed a concrete booking, create the event on
+  // the tenant's connected calendar (best-effort, fire-and-forget — dormant until
+  // the Calendar integration is connected).
+  if (agentResponse.calendar_event?.start) {
+    bookCalendarBestEffort(tenantId, agentResponse.calendar_event, { name: customer.name, phone });
+  }
 
   // Persist the per-message state (everything EXCEPT the needsHuman flip, which is
   // handled atomically below). needsHuman is deliberately left out of this update so

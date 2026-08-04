@@ -33,6 +33,20 @@ const AnswerSchema = z.object({
   answer: z.string(),
 });
 
+// A confirmed appointment the agent extracted from the conversation. Optional —
+// only present when the customer settled on a concrete date+time. start/end are
+// full ISO-8601 datetimes; the engine turns this into a Google Calendar event when
+// the tenant has the Calendar integration connected (best-effort, otherwise ignored).
+const CalendarEventSchema = z
+  .object({
+    summary: z.string(),
+    start: z.string(), // ISO-8601, e.g. 2026-08-12T17:00:00+03:00
+    end: z.string().nullable().optional(),
+    timeZone: z.string().nullable().optional(),
+  })
+  .nullable()
+  .optional();
+
 const ResponseSchema = z.object({
   reply: z.string(),
   intent: z.string(),
@@ -45,6 +59,7 @@ const ResponseSchema = z.object({
   lead_score: z.number().int().min(1).max(100),
   needs_human: z.boolean(),
   reset_answers: z.boolean().default(false),
+  calendar_event: CalendarEventSchema,
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -133,10 +148,17 @@ ${INTENTS.map((i) => `- ${i}`).join('\n')}
   "link_to_send": "<ה-URL מהתהליך לשליחה, או null>",
   "conversation_status": "active | completed | abandoned | needs_human",
   "lead_score": <מספר שלם 1-100>,
-  "needs_human": <true|false>
+  "needs_human": <true|false>,
+  "calendar_event": null
 }
 
 חשוב: אל תכניס URL לתוך "reply" — המערכת מצרפת את הקישור באופן אוטומטי. ב-link_to_send החזר את ה-URL המוגדר של התהליך. ב-collected_answers החזר את כל התשובות שנאספו עד כה (כולל החדשה).
+
+## קביעת תור/פגישה ליומן
+- כברירת מחדל החזר "calendar_event": null.
+- רק כאשר הלקוח סיכם תאריך ושעה קונקרטיים לפגישה/תור (למשל "יום חמישי הקרוב ב-17:00"), החזר אובייקט:
+  "calendar_event": { "summary": "<כותרת קצרה, למשל: תור — [שם הלקוח]>", "start": "<ISO-8601 עם אזור זמן, למשל 2026-08-14T17:00:00+03:00>", "end": "<ISO-8601, ברירת מחדל שעה אחרי start>", "timeZone": "Asia/Jerusalem" }
+- חשב את התאריך המדויק ביחס ל"תאריך היום" שמופיע במצב השיחה. אם אין תאריך/שעה ברורים — החזר null (אל תמציא).
 
 # מאגר הידע של העסק
 ${buildKnowledgeBaseBlock(kb)}
@@ -153,7 +175,13 @@ function buildStatePrompt(state, history) {
     .slice(-12)
     .map((m) => `${m.senderType === 'customer' ? 'לקוח' : 'סוכן'}: ${m.text}`)
     .join('\n');
+  // Localized "today" so the agent can resolve relative dates ("יום חמישי הקרוב")
+  // into concrete ISO datetimes for calendar_event.
+  const today = new Intl.DateTimeFormat('he-IL', {
+    weekday: 'long', year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'Asia/Jerusalem',
+  }).format(new Date());
   return `# מצב השיחה הנוכחי
+- תאריך היום (Asia/Jerusalem): ${today}
 - מספר הוואטסאפ הידוע של הלקוח: ${state.customerPhone || 'לא ידוע'}
 - תהליך מתאים לפי מילות הפעלה (סמכותי — אם הלקוח מתחיל תהליך, השתמש בדיוק בזה): ${state.suggestedFlow ? `${state.suggestedFlow.id} (${state.suggestedFlow.name})` : 'אין התאמה'}
 - flow_id נוכחי: ${state.currentFlowId || 'null'}
