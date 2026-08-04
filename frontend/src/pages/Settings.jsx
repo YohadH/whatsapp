@@ -790,7 +790,6 @@ function Simulator() {
   const [phone, setPhone] = useState('972500000000');
   const [text, setText] = useState('');
   const [messages, setMessages] = useState([]);
-  const [last, setLast] = useState(null);
   const [sending, setSending] = useState(false);
   const endRef = useRef(null);
 
@@ -806,10 +805,14 @@ function Simulator() {
     try {
       const res = await api.post('/api/whatsapp/simulate', { phone, text: userMsg });
       const ar = res.data.agentResponse;
-      setMessages((m) => [...m, { from: 'agent', text: ar.reply }]);
-      setLast(ar);
+      if (ar?.reply) {
+        // Show HOW the agent answered: ✨ AI (used the LLM) vs 🤖 automatic (rule/flow).
+        setMessages((m) => [...m, { from: 'agent', text: ar.reply, src: ar.ai?.used ? 'ai' : 'rules' }]);
+      } else {
+        setMessages((m) => [...m, { from: 'agent', text: 'ℹ️ הסוכן לא השיב על הודעה זו (למשל אחרי סיום תהליך).', src: 'info' }]);
+      }
     } catch (err) {
-      setMessages((m) => [...m, { from: 'agent', text: '⚠️ שגיאה: ' + (err.response?.data?.error || err.message) }]);
+      setMessages((m) => [...m, { from: 'agent', text: '⚠️ שגיאה: ' + (err.response?.data?.error || err.message), src: 'error' }]);
     } finally {
       setSending(false);
     }
@@ -818,37 +821,37 @@ function Simulator() {
   return (
     <div className="card mt-4">
       <h3 className="font-semibold mb-1">🧪 סימולטור סוכן</h3>
-      <p className="text-sm text-gray-500 mb-3">בדקו את הסוכן בדיוק כמו לקוח אמיתי בוואטסאפ. ההודעות נשמרות גם תחת "שיחות".</p>
+      <p className="text-sm text-gray-500 mb-3">בדקו את הסוכן בדיוק כמו לקוח אמיתי — הוא עונה מתוך <b>מאגר הידע</b>, <b>התהליכים</b> ו<b>מנוע הבינה</b> שהגדרתם. ההודעות נשמרות גם תחת "שיחות".</p>
 
-      <div className="flex items-center gap-2 mb-3">
+      <div className="flex items-center gap-2 mb-3 flex-wrap">
         <label className="text-sm text-gray-500">טלפון לקוח לבדיקה:</label>
-        <input className="input w-48" value={phone} onChange={(e) => setPhone(e.target.value)} />
-        <button className="btn-ghost" onClick={() => { setMessages([]); setLast(null); }}>איפוס</button>
+        <input className="input w-48" dir="ltr" value={phone} onChange={(e) => setPhone(e.target.value)} />
+        <button className="btn-ghost" onClick={() => setMessages([])}>איפוס</button>
       </div>
 
-      <div className="grid lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2 border rounded-xl bg-gray-50 flex flex-col" style={{ height: 380 }}>
-          <div className="flex-1 overflow-y-auto p-4 space-y-2">
-            {messages.length === 0 && <div className="text-center text-gray-400 text-sm mt-10">שלחו הודעה כדי להתחיל…</div>}
-            {messages.map((m, i) => (
-              <div key={i} className={`flex ${m.from === 'customer' ? 'justify-start' : 'justify-end'}`}>
-                <div className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap ${m.from === 'customer' ? 'bg-white border' : 'bg-brand-600 text-white'}`}>
+      <div className="border rounded-xl bg-gray-50 flex flex-col" style={{ height: 420 }}>
+        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+          {messages.length === 0 && <div className="text-center text-gray-400 text-sm mt-10">שלחו הודעה כדי להתחיל…</div>}
+          {messages.map((m, i) => (
+            <div key={i} className={`flex ${m.from === 'customer' ? 'justify-start' : 'justify-end'}`}>
+              <div className={`max-w-[80%] ${m.from === 'customer' ? '' : 'text-left'}`}>
+                <div className={`rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap ${m.from === 'customer' ? 'bg-white border' : 'bg-brand-600 text-white'}`}>
                   {m.text}
                 </div>
+                {m.from === 'agent' && (m.src === 'ai' || m.src === 'rules') && (
+                  <div className="text-[11px] text-gray-400 mt-0.5 px-1">
+                    {m.src === 'ai' ? '✨ נענה על ידי AI' : '🤖 מענה אוטומטי (כלל/תהליך)'}
+                  </div>
+                )}
               </div>
-            ))}
-            <div ref={endRef} />
-          </div>
-          <form onSubmit={send} className="border-t p-2 flex gap-2">
-            <input className="input flex-1" placeholder="כתבו הודעה כלקוח…" value={text} onChange={(e) => setText(e.target.value)} disabled={sending} />
-            <button className="btn-primary" disabled={sending}>{sending ? '…' : 'שליחה'}</button>
-          </form>
+            </div>
+          ))}
+          <div ref={endRef} />
         </div>
-
-        <div className="border rounded-xl p-3 bg-gray-900 text-green-300 text-xs overflow-auto" style={{ height: 380 }}>
-          <div className="text-gray-400 mb-2">תגובת JSON אחרונה של הסוכן:</div>
-          <pre className="whitespace-pre-wrap">{last ? JSON.stringify(last, null, 2) : '—'}</pre>
-        </div>
+        <form onSubmit={send} className="border-t p-2 flex gap-2">
+          <input className="input flex-1" placeholder="כתבו הודעה כלקוח…" value={text} onChange={(e) => setText(e.target.value)} disabled={sending} />
+          <button className="btn-primary" disabled={sending}>{sending ? '…' : 'שליחה'}</button>
+        </form>
       </div>
     </div>
   );

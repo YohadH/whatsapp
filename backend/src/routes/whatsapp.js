@@ -186,16 +186,17 @@ router.post(
   asyncHandler(async (req, res) => {
     const { phone, text, name } = req.body || {};
     if (!phone || !text) return res.status(400).json({ error: 'phone and text are required' });
-    // "WhatsApp connected" = a routable phone number id AND an encrypted access token
-    // (mirrors tenantContext.js `enabled: Boolean(token && waPhoneNumberId)`). Both come
-    // from TENANT_SELECT. Without a real connection, refuse — no OpenAI spend on a fresh
-    // trial that never onboarded WhatsApp.
-    if (!req.tenant.waPhoneNumberId || !req.tenant.waTokenEnc) {
-      return res.status(403).json({
-        error: 'חברו מספר WhatsApp פעיל לפני שימוש בסימולטור',
-        code: 'whatsapp_not_connected',
-      });
-    }
+    // A trial customer must be able to TEST the agent (see real answers from their
+    // own knowledge base / flows / AI) before connecting WhatsApp — that's the whole
+    // point of the trial. Cost is already bounded WITHOUT a connection gate:
+    //   • auth + the /simulate rate limiter (app.js) cap request volume;
+    //   • the downstream hasCredits() gate (lib/credits.js) withholds platform AI once
+    //     the tenant's credit allotment is spent → an over-quota tenant gets only the
+    //     free rule-based reply (no OpenAI spend);
+    //   • a tenant with its OWN AI key (Settings → מנוע הבינה) runs on that key, never
+    //     the platform key.
+    // So the simulator runs for any authenticated tenant; it just replies in simulator
+    // mode (logs instead of sending) when no number is connected.
     if (await handleOptOut(req.tenant, phone, text)) return res.json({ optedOut: true });
     const result = await handleIncomingMessage({ tenant: req.tenant, phone, text, name });
     res.json(result);
