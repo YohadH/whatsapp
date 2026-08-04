@@ -8,6 +8,7 @@ import { trackEvent, EVENTS } from './analytics.js';
 import { computeLeadScore } from './leadScore.js';
 import { notifyOwnerHandoff } from './handoffNotify.js';
 import { deliverLeadEvent } from './outboundWebhook.js';
+import { normalizePhone } from '../lib/phone.js';
 
 // A URL-based image is downloaded by WhatsApp before delivery, so it can lag
 // behind a small voice note sent right after. This short pause (only when a
@@ -98,10 +99,15 @@ function awayAlreadySentRecently(history, awayMessage) {
  * of a specific tenant. `tenant` is the full Tenant row (its WhatsApp creds are
  * used to reply). Returns { conversation, agentResponse, replySent }.
  */
-export async function handleIncomingMessage({ tenant, phone, text, name, rawPayload, waMessageId }) {
+export async function handleIncomingMessage({ tenant, phone: rawPhone, text, name, rawPayload, waMessageId }) {
   if (!tenant?.id) throw new Error('handleIncomingMessage requires a tenant');
   const tenantId = tenant.id;
   const creds = tenantWhatsAppCreds(tenant);
+
+  // Canonicalize the number up front so the SAME contact in different formats
+  // (e.g. "0545532316" and "972545532316") resolves to ONE customer/thread —
+  // otherwise each format becomes its own Customer row and shows as a duplicate.
+  const phone = normalizePhone(rawPhone) || rawPhone;
 
   // 0) Idempotency: Meta delivers webhooks at-least-once. If we've already
   // stored this inbound message id for this tenant, skip re-processing.
