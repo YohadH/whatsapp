@@ -73,7 +73,12 @@ export default function Settings() {
               <ServerStatus health={health} />
             </>
           )}
-          {section === 'ai' && <AiProvider />}
+          {section === 'ai' && (
+            <>
+              <AiProvider />
+              <ReplyProvider />
+            </>
+          )}
           {section === 'integrations' && (
             <>
               <Integrations google={google} />
@@ -219,6 +224,94 @@ function AiProvider() {
           {saved && <span className="text-sm text-green-600">✓ נשמר</span>}
           {err && <span className="text-sm text-red-600">{err}</span>}
         </div>
+      </form>
+    </div>
+  );
+}
+
+// External reply provider — the "escalation brain". The owner's own agent (a local
+// Claude over an HTTPS tunnel) is consulted when the built-in bot isn't enough; on any
+// failure the system falls back to the normal human hand-off.
+function ReplyProvider() {
+  const [enabled, setEnabled] = useState(false);
+  const [url, setUrl] = useState('');
+  const [hasSecret, setHasSecret] = useState(false);
+  const [secret, setSecret] = useState('');
+  const [consultOn, setConsultOn] = useState('escalation');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [test, setTest] = useState(null);
+  const [err, setErr] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  const load = () =>
+    api.get('/api/settings/reply-provider')
+      .then((r) => { setEnabled(!!r.data.enabled); setUrl(r.data.url || ''); setHasSecret(!!r.data.hasSecret); setConsultOn(r.data.consultOn || 'escalation'); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  useEffect(() => { load(); }, []);
+
+  async function save(e) {
+    e.preventDefault();
+    setSaving(true); setErr(''); setSaved(false); setTest(null);
+    try {
+      await api.put('/api/settings/reply-provider', { enabled, url: url.trim(), secret: secret.trim() || undefined, consultOn });
+      setSecret(''); setSaved(true); setTimeout(() => setSaved(false), 2500); load();
+    } catch (ex) { setErr(ex.response?.data?.error || 'השמירה נכשלה'); }
+    finally { setSaving(false); }
+  }
+  async function runTest() {
+    setTest({ loading: true }); setErr('');
+    try { const r = await api.post('/api/settings/reply-provider/test'); setTest(r.data); }
+    catch (ex) { setTest({ ok: false, ...(ex.response?.data || { error: 'הבדיקה נכשלה' }) }); }
+  }
+
+  if (loading) return <CardLoader />;
+  return (
+    <div className="card mt-4">
+      <h3 className="font-semibold mb-1">🧠 מוח תגובות מותאם (סוכן חיצוני)</h3>
+      <p className="text-xs text-slate-400 mb-4">
+        חברו סוכן משלכם (למשל Claude מקומי דרך מנהרת HTTPS). הוא נכנס לפעולה <b>רק כשהבוט הפנימי לא מספיק</b> — במקום להעביר לנציג אנושי.
+        אם הסוכן לא זמין, איטי או לא מחזיר תשובה, המערכת חוזרת אוטומטית להעברה לנציג. הבקשה נחתמת ב-HMAC כדי שהסוכן שלכם יוכל לוודא שהיא מ-HeyIL.
+      </p>
+      <form onSubmit={save} className="space-y-4 max-w-2xl">
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" className="accent-brand-500" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+          הפעלת סוכן חיצוני
+        </label>
+        <div>
+          <label className="label">כתובת ה-endpoint (HTTPS)</label>
+          <input className="input" dir="ltr" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://your-tunnel.example.com/reply" />
+        </div>
+        <div className="grid sm:grid-cols-2 gap-3">
+          <div>
+            <label className="label">סוד לחתימה (אופציונלי) {hasSecret && <span className="text-green-600 text-xs">(שמור ✓)</span>}</label>
+            <input className="input" dir="ltr" type="password" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="לחתימת X-HeyIL-Signature" />
+          </div>
+          <div>
+            <label className="label">מתי להתייעץ</label>
+            <select className="input" value={consultOn} onChange={(e) => setConsultOn(e.target.value)}>
+              <option value="escalation">רק כשהבוט לא מספיק (מומלץ)</option>
+              <option value="always">בכל הודעה (הסוכן יכול לוותר)</option>
+            </select>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <button className="btn-primary" disabled={saving}>{saving ? 'שומר…' : 'שמירה'}</button>
+          <button type="button" className="btn-ghost" disabled={!url.trim()} onClick={runTest}>שליחת בדיקה</button>
+          {saved && <span className="text-sm text-green-600">✓ נשמר</span>}
+          {err && <span className="text-sm text-red-600">{err}</span>}
+        </div>
+        {test && !test.loading && (
+          <div className={`text-sm rounded-lg p-2 ${test.ok && test.gotValidReply ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}`}>
+            {test.ok
+              ? test.gotValidReply
+                ? `✓ הסוכן החזיר תשובה תוך ${test.ms}ms: "${(test.reply || '').slice(0, 80)}"`
+                : `⚠ ה-endpoint הגיב (HTTP ${test.status}, ${test.ms}ms) אך לא החזיר שדה "reply" תקין`
+              : `✗ ${test.error === 'not_configured' ? 'לא הוגדרה כתובת' : test.error}${test.status ? ` (HTTP ${test.status})` : ''}`}
+          </div>
+        )}
+        {test?.loading && <div className="text-sm text-slate-400">בודק…</div>}
       </form>
     </div>
   );

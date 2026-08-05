@@ -14,6 +14,7 @@ import {
 } from '../services/numberRegistration.js';
 import { WEBHOOK_SLUGS, isSafeWebhookUrl, deliverToUrl } from '../services/outboundWebhook.js';
 import { getNichePack } from '../data/nichePacks.js';
+import { testReplyProvider } from '../services/replyProvider.js';
 
 // Tenant-facing account settings, scoped to the caller's OWN tenant (req.tenantId,
 // set by withTenant). This lets a tenant admin self-connect their WhatsApp number
@@ -425,6 +426,52 @@ router.put(
 
     await prisma.tenant.update({ where: { id: req.tenantId }, data: { integrations: enabled, integrationConfig: cfg } });
     res.json({ enabled, config: { [slug]: { url: cfg[slug]?.url || '', hasSecret: Boolean(cfg[slug]?.secret) } } });
+  })
+);
+
+// ── Reply provider (external "escalation brain") ─────────────────────────────
+// The tenant's own agent (a local Claude over an HTTPS tunnel) that HeyIL consults
+// when the built-in bot is not enough. Config lives under integrationConfig.replyProvider.
+router.get(
+  '/reply-provider',
+  asyncHandler(async (req, res) => {
+    const cfg = (req.tenant?.integrationConfig && typeof req.tenant.integrationConfig === 'object' ? req.tenant.integrationConfig : {}).replyProvider || {};
+    res.json({ enabled: !!cfg.enabled, url: cfg.url || '', hasSecret: !!cfg.secret, timeoutMs: cfg.timeoutMs || 30000, consultOn: cfg.consultOn || 'escalation' });
+  })
+);
+
+// PUT save/toggle. body: { enabled, url, secret?, timeoutMs?, consultOn? }.
+// secret: omit to keep, "-" to clear. url validated as a public HTTPS host.
+router.put(
+  '/reply-provider',
+  asyncHandler(async (req, res) => {
+    const b = req.body || {};
+    const url = String(b.url || '').trim();
+    const enabled = b.enabled === true;
+    if (enabled) {
+      if (!url) return res.status(400).json({ error: 'נדרשת כתובת endpoint' });
+      if (!(await isSafeWebhookUrl(url))) return res.status(400).json({ error: 'כתובת לא תקינה — נדרשת כתובת HTTPS ציבורית' });
+    }
+    const t = await prisma.tenant.findUnique({ where: { id: req.tenantId }, select: { integrationConfig: true } });
+    const all = t?.integrationConfig && typeof t.integrationConfig === 'object' ? { ...t.integrationConfig } : {};
+    const prev = all.replyProvider || {};
+    let secret = prev.secret;
+    if (typeof b.secret === 'string') { const s = b.secret.trim(); secret = s === '-' ? undefined : s || prev.secret; }
+    const timeoutMs = Number.isInteger(b.timeoutMs) ? Math.min(60000, Math.max(3000, b.timeoutMs)) : prev.timeoutMs || 30000;
+    const consultOn = b.consultOn === 'always' ? 'always' : 'escalation';
+    all.replyProvider = url ? { enabled, url, ...(secret ? { secret } : {}), timeoutMs, consultOn } : { enabled: false };
+    await prisma.tenant.update({ where: { id: req.tenantId }, data: { integrationConfig: all } });
+    res.json({ enabled: !!all.replyProvider.enabled, url: all.replyProvider.url || '', hasSecret: !!all.replyProvider.secret, timeoutMs, consultOn });
+  })
+);
+
+// POST test → send a sample reply.request and report status/latency/returned reply.
+router.post(
+  '/reply-provider/test',
+  asyncHandler(async (req, res) => {
+    const result = await testReplyProvider(req.tenant);
+    if (result.ok) return res.json(result);
+    return res.status(result.error === 'not_configured' ? 400 : 502).json(result);
   })
 );
 

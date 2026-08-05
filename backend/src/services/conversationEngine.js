@@ -10,6 +10,7 @@ import { notifyOwnerHandoff } from './handoffNotify.js';
 import { deliverLeadEvent } from './outboundWebhook.js';
 import { normalizePhone } from '../lib/phone.js';
 import { createCalendarEvent } from './googleIntegration.js';
+import { generateViaProvider, replyProviderConfig } from './replyProvider.js';
 
 // Create a Google Calendar event from an agent-extracted booking. BEST-EFFORT and
 // fire-and-forget: if the Calendar integration isn't configured/enabled/connected,
@@ -591,6 +592,24 @@ export async function handleIncomingMessage({ tenant, phone: rawPhone, text, nam
     status: agentResponse.conversation_status,
   });
   agentResponse.lead_score = leadScore;
+
+  // Escalation brain: when the built-in bot is NOT ENOUGH (needs_human) — or in
+  // 'always' mode — and the tenant configured an external reply provider (a local
+  // Claude over an HTTPS tunnel), consult it before handing off to a human. If it
+  // returns a reply we use it and CANCEL the hand-off; otherwise we fall back to the
+  // normal needs_human path. Best-effort (never throws / never blocks a reply).
+  const rpCfg = replyProviderConfig(tenant);
+  if (rpCfg && (agentResponse.needs_human || rpCfg.consultOn === 'always')) {
+    const provided = await generateViaProvider(tenant, { conversation, customer, phone, text, history, kb, flows });
+    if (provided?.reply) {
+      agentResponse.reply = provided.reply;
+      replyText = provided.reply; // the provider owns its full reply text (incl. any link)
+      replyVia = 'ai'; // it's the owner's custom AI → inbox shows "✨ סוכן AI"
+      agentResponse.needs_human = provided.needs_human === true;
+      if (provided.conversation_status) agentResponse.conversation_status = provided.conversation_status;
+      if (provided.calendar_event !== undefined) agentResponse.calendar_event = provided.calendar_event;
+    }
+  }
 
   // Google Calendar: if the agent confirmed a concrete booking, create the event on
   // the tenant's connected calendar (best-effort, fire-and-forget — dormant until
