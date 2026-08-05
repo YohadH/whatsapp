@@ -15,6 +15,7 @@ import {
 import { WEBHOOK_SLUGS, isSafeWebhookUrl, deliverToUrl } from '../services/outboundWebhook.js';
 import { getNichePack } from '../data/nichePacks.js';
 import { testReplyProvider } from '../services/replyProvider.js';
+import { generateKey, API_SCOPES, isValidScope } from '../lib/apiKeys.js';
 
 // Tenant-facing account settings, scoped to the caller's OWN tenant (req.tenantId,
 // set by withTenant). This lets a tenant admin self-connect their WhatsApp number
@@ -472,6 +473,50 @@ router.post(
     const result = await testReplyProvider(req.tenant);
     if (result.ok) return res.json(result);
     return res.status(result.error === 'not_configured' ? 400 : 502).json(result);
+  })
+);
+
+// ── API keys (for an external agent — ops / data-sync) ───────────────────────
+// Owner-facing management (normal login auth). The Agent API itself (routes/agent.js)
+// is authed by the KEY, not this session. The full key is returned ONCE on create.
+router.get(
+  '/api-keys',
+  asyncHandler(async (req, res) => {
+    const keys = await prisma.apiKey.findMany({
+      where: { tenantId: req.tenantId, revokedAt: null },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, name: true, prefix: true, scopes: true, lastUsedAt: true, createdAt: true },
+    });
+    res.json({ keys, scopes: API_SCOPES });
+  })
+);
+
+// POST { name, scopes[] } → create a key. Returns { key } (shown ONCE — never again).
+router.post(
+  '/api-keys',
+  asyncHandler(async (req, res) => {
+    const name = String(req.body?.name || '').trim() || 'External agent';
+    let scopes = Array.isArray(req.body?.scopes) ? req.body.scopes.filter(isValidScope) : [];
+    if (!scopes.length) scopes = ['read']; // never mint a scope-less key
+    const { key, prefix, keyHash } = generateKey();
+    const row = await prisma.apiKey.create({
+      data: { tenantId: req.tenantId, name, prefix, keyHash, scopes },
+      select: { id: true, name: true, prefix: true, scopes: true, createdAt: true },
+    });
+    res.status(201).json({ ...row, key }); // `key` shown once
+  })
+);
+
+// DELETE /api-keys/:id → revoke (soft, keeps the audit row).
+router.delete(
+  '/api-keys/:id',
+  asyncHandler(async (req, res) => {
+    const { count } = await prisma.apiKey.updateMany({
+      where: { id: req.params.id, tenantId: req.tenantId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    if (!count) return res.status(404).json({ error: 'Key not found' });
+    res.json({ revoked: true });
   })
 );
 

@@ -1,0 +1,14 @@
+{
+  "name": "heyil-local-agent",
+  "private": true,
+  "type": "module",
+  "description": "Starter for a local Claude agent that connects to HeyIL (reply provider + Agent API)",
+  "scripts": {
+    "reply": "node reply-server.mjs",
+    "ops": "node ops-agent.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.30.0",
+    "express": "^4.21.0"
+  }
+}

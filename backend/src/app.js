@@ -26,6 +26,7 @@ import broadcastRoutes from './routes/broadcast.js';
 import uploadsRoutes, { uploadsDir } from './routes/uploads.js';
 import adminRoutes from './routes/admin.js';
 import settingsRoutes from './routes/settings.js';
+import agentRoutes from './routes/agent.js';
 import creditsRoutes from './routes/credits.js';
 import billingRoutes from './routes/billing.js';
 import paymentsRoutes from './routes/payments.js';
@@ -89,6 +90,14 @@ app.use('/', redirectRoutes); // /r/:linkId click tracking
 app.use('/', legalRoutes); // /privacy + /terms (required by Meta for app token)
 app.use('/', bioRoutes); // /l/:slug public link page ("link tree")
 app.use('/uploads', express.static(uploadsDir)); // public so WhatsApp can fetch sent audio by URL
+
+// ── External-agent API (API-key auth, NOT a session) ─────────
+// Authed per-request by an API key INSIDE the routes (middleware/apiKeyAuth), which
+// sets the tenant — so no requireAuth/withTenant here. MUST be mounted BEFORE the
+// `app.use('/api', requireAuth, …)` flows mount below, or that catch-all would run
+// JWT auth on these key-authed requests first. Its own rate limiter blunts abuse.
+const agentLimiter = rateLimit({ windowMs: 60 * 1000, max: 120, standardHeaders: true, legacyHeaders: false, message: { error: 'Rate limit exceeded' } });
+app.use('/api/agent', agentLimiter, agentRoutes);
 
 // ── Platform (super-admin) routes ────────────────────────────
 app.use('/api/admin', requireAuth, requireSuperAdmin, adminRoutes); // tenant provisioning

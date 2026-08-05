@@ -77,6 +77,7 @@ export default function Settings() {
             <>
               <AiProvider />
               <ReplyProvider />
+              <ApiKeys />
             </>
           )}
           {section === 'integrations' && (
@@ -225,6 +226,102 @@ function AiProvider() {
           {err && <span className="text-sm text-red-600">{err}</span>}
         </div>
       </form>
+    </div>
+  );
+}
+
+// API keys — scoped, revocable keys for an external agent (ops / data-sync) to reach
+// the HeyIL Agent API. The full key is shown once at creation.
+const SCOPE_LABELS = {
+  read: 'קריאה (לידים, שיחות, קמפיינים, מאגר ידע)',
+  'write:messaging': 'שליחת הודעות ללקוחות',
+  'write:settings': 'עדכון הגדרות',
+  'write:campaigns': 'ניהול קמפיינים',
+};
+function ApiKeys() {
+  const [keys, setKeys] = useState(null);
+  const [allScopes, setAllScopes] = useState([]);
+  const [name, setName] = useState('');
+  const [scopes, setScopes] = useState(['read']);
+  const [creating, setCreating] = useState(false);
+  const [created, setCreated] = useState(null); // { key } — shown once
+  const [copied, setCopied] = useState(false);
+  const [err, setErr] = useState('');
+
+  const load = () =>
+    api.get('/api/settings/api-keys')
+      .then((r) => { setKeys(r.data.keys); setAllScopes(r.data.scopes || []); })
+      .catch(() => setKeys([]));
+  useEffect(() => { load(); }, []);
+
+  const toggleScope = (s) => setScopes((cur) => (cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]));
+
+  async function create() {
+    setCreating(true); setErr(''); setCreated(null);
+    try {
+      const r = await api.post('/api/settings/api-keys', { name: name.trim(), scopes });
+      setCreated(r.data); setCopied(false); setName(''); setScopes(['read']); load();
+    } catch (e) { setErr(e.response?.data?.error || 'יצירת המפתח נכשלה'); }
+    finally { setCreating(false); }
+  }
+  async function revoke(id) {
+    if (!confirm('לבטל את המפתח? כל סוכן שמשתמש בו יפסיק לעבוד מיד.')) return;
+    try { await api.delete(`/api/settings/api-keys/${id}`); load(); } catch { /* ignore */ }
+  }
+
+  if (!keys) return <CardLoader />;
+  return (
+    <div className="card mt-4">
+      <h3 className="font-semibold mb-1">🔑 מפתחות API (סוכן חיצוני)</h3>
+      <p className="text-xs text-slate-400 mb-4">
+        צרו מפתח מוגבל-הרשאות כדי לחבר סוכן חיצוני (ניהול / סנכרון נתונים) ל-API של HeyIL. המפתח מוצג <b>פעם אחת בלבד</b> — שמרו אותו במקום בטוח. אפשר לבטל בכל רגע.
+      </p>
+
+      {created && (
+        <div className="rounded-lg bg-green-50 border border-green-200 p-3 mb-4">
+          <div className="text-sm text-green-800 font-medium mb-1">✅ המפתח נוצר — הוא לא יוצג שוב:</div>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 min-w-0 truncate text-xs bg-white rounded px-2 py-1.5 border" dir="ltr">{created.key}</code>
+            <button type="button" className="btn-ghost text-xs" onClick={() => { navigator.clipboard?.writeText(created.key); setCopied(true); }}>{copied ? '✓ הועתק' : 'העתקה'}</button>
+          </div>
+        </div>
+      )}
+
+      {/* Create */}
+      <div className="rounded-xl border border-slate-200 p-3 mb-4">
+        <div className="text-sm font-medium mb-2">מפתח חדש</div>
+        <input className="input mb-2" value={name} onChange={(e) => setName(e.target.value)} placeholder="שם לזיהוי (למשל: סוכן Ops מקומי)" />
+        <div className="flex flex-wrap gap-2 mb-2">
+          {(allScopes.length ? allScopes : Object.keys(SCOPE_LABELS)).map((s) => (
+            <label key={s} className="flex items-center gap-1.5 text-sm border rounded-lg px-2.5 py-1.5 cursor-pointer">
+              <input type="checkbox" className="accent-brand-500" checked={scopes.includes(s)} onChange={() => toggleScope(s)} />
+              {SCOPE_LABELS[s] || s}
+            </label>
+          ))}
+        </div>
+        <button type="button" className="btn-primary" disabled={creating} onClick={create}>{creating ? 'יוצר…' : '+ יצירת מפתח'}</button>
+        {err && <span className="text-sm text-red-600 mr-3">{err}</span>}
+      </div>
+
+      {/* List */}
+      {keys.length === 0 ? (
+        <div className="text-sm text-slate-400">עדיין אין מפתחות.</div>
+      ) : (
+        <ul className="divide-y divide-slate-100">
+          {keys.map((k) => (
+            <li key={k.id} className="flex items-center justify-between gap-3 py-2.5">
+              <div className="min-w-0">
+                <div className="text-sm font-medium text-slate-800">{k.name} <code className="text-xs text-slate-400" dir="ltr">{k.prefix}</code></div>
+                <div className="text-xs text-slate-500">
+                  {(k.scopes || []).map((s) => SCOPE_LABELS[s] || s).join(' · ')}
+                  {k.lastUsedAt ? ` · שימוש אחרון: ${new Date(k.lastUsedAt).toLocaleDateString('he-IL')}` : ' · טרם היה בשימוש'}
+                </div>
+              </div>
+              <button className="btn-ghost text-red-600 text-sm shrink-0" onClick={() => revoke(k.id)}>ביטול</button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

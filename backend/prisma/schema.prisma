@@ -153,8 +153,32 @@ model Tenant {
   metaCostEntries   MetaCostEntry[]
   expenses          Expense[]
   recipientLists    RecipientList[]
+  apiKeys           ApiKey[]
 
   @@index([status])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Scoped API key — lets a tenant connect an EXTERNAL agent (a local Claude for
+// ops/data-sync) to a narrow, revocable slice of the HeyIL API. The full key is
+// shown ONCE at creation; only its SHA-256 hash is stored (keys are high-entropy,
+// so a fast hash is fine — unlike user passwords). `scopes` gates what the key can
+// do (read | write:messaging | write:settings | …). Revoke by setting revokedAt.
+// ─────────────────────────────────────────────────────────────
+model ApiKey {
+  id         String    @id @default(cuid())
+  tenantId   String
+  name       String
+  prefix     String // display-only leading chars, e.g. "heyil_sk_ab12…"
+  keyHash    String    @unique // SHA-256 of the full key
+  scopes     Json      @default("[]") // ['read','write:messaging','write:settings','write:campaigns']
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
 }
 
 // ─────────────────────────────────────────────────────────────
