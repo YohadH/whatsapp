@@ -73,6 +73,9 @@ router.post(
         dailyBroadcastCap: ent.dailyBroadcastCap,
         monthlyMessageLimit: ent.monthlyMessageLimit,
         niche: nicheId,
+        // Opt-in: new self-serve signups start with automatic AI replies OFF. The owner
+        // turns it on in Settings → מנוע הבינה (then the 10/day free quota applies).
+        aiEnabled: false,
         // Every tenant gets its own knowledge-base row up front (same as admin-provisioned).
         knowledgeBase: { create: {} },
       },

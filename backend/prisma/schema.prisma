@@ -124,6 +124,18 @@ model Tenant {
   aiApiKeyEnc String?
   aiModel     String?
 
+  // ── AI activation + daily free-reply quota (MIGRATION 19_ai_daily_quota) ──
+  // aiEnabled: master switch for automatic AI replies. Existing tenants default true
+  // (grandfathered); new self-serve signups are created with false (opt-in — activated
+  // in Settings). aiDailyCount/aiDailyDate implement the free allowance: the first
+  // FREE_DAILY_AI_REPLIES (lib/aiDailyQuota.js) AI replies each Asia/Jerusalem day cost
+  // no credit; beyond that the normal AI-credit billing applies. BYO-key tenants pay
+  // their own provider, so the daily cap never applies to them. aiDailyDate is the
+  // yyyy-mm-dd (Israel) the counter belongs to; a new day zeroes it.
+  aiEnabled    Boolean @default(true)
+  aiDailyCount Int     @default(0)
+  aiDailyDate  String?
+
   // ── Owner's personal WhatsApp number ──
   // Digits-only international format (e.g. 972501234567). Used to recognize the
   // OWNER in the inbound webhook: an image the owner sends to their own business

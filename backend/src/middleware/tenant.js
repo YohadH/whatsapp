@@ -51,6 +51,9 @@ export const TENANT_SELECT = {
   aiProvider: true, // BYO-AI (dormant until configured)
   aiApiKeyEnc: true,
   aiModel: true,
+  aiEnabled: true, // master switch for automatic AI replies (opt-in for new signups)
+  aiDailyCount: true, // free-reply counter for aiDailyDate (lib/aiDailyQuota.js)
+  aiDailyDate: true, // yyyy-mm-dd (Asia/Jerusalem) the counter belongs to
 };
 
 // Resolve the active tenant for a request and attach `req.tenant` / `req.tenantId`.

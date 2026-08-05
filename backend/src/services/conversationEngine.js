@@ -11,6 +11,7 @@ import { deliverLeadEvent } from './outboundWebhook.js';
 import { normalizePhone } from '../lib/phone.js';
 import { createCalendarEvent } from './googleIntegration.js';
 import { generateViaProvider, replyProviderConfig } from './replyProvider.js';
+import { hasFreeQuotaToday, consumeDailyFreeReply } from '../lib/aiDailyQuota.js';
 
 // Create a Google Calendar event from an agent-extracted booking. BEST-EFFORT and
 // fire-and-forget: if the Calendar integration isn't configured/enabled/connected,
@@ -481,30 +482,38 @@ export async function handleIncomingMessage({ tenant, phone: rawPhone, text, nam
     // pays its provider directly, so credits never apply. Platform-key tenants still
     // gate on credits: out of credits → rule-based reply, no charge.
     const byoKey = tenant.aiProvider && tenant.aiApiKeyEnc;
-    const allowAI = byoKey ? true : await hasCredits(tenantId);
-    outOfCredits = !byoKey && !allowAI;
+    // Master switch: automatic AI replies are opt-in per tenant (new signups start OFF,
+    // activated in Settings). When off, never call the LLM — fall back to rules.
+    const aiOn = tenant.aiEnabled !== false;
+    // Platform-key tenants get FREE_DAILY_AI_REPLIES free AI replies/day before any
+    // credit is spent; BYO-key tenants pay their own provider, so the cap never applies.
+    const underFreeQuota = aiOn && !byoKey && hasFreeQuotaToday(tenant);
+    const allowAI = aiOn && (byoKey || underFreeQuota || (await hasCredits(tenantId)));
+    outOfCredits = aiOn && !byoKey && !allowAI;
     const { response: llm, ai } = await generateAgentResponse(ctx, { allowAI });
     if (ai.used && ai.billable) {
       // A PLATFORM-key LLM reply was produced (BYO-key replies are ai.billable:false
-      // and skip this block). Billing unit = a 24h CONVERSATION window: charges 1
-      // credit only when this reply OPENS A NEW window; replies inside an open window
-      // are free (charged:false).
-      const result = await chargeAiCredit({
-        conversationId: conversation.id,
-        tenantId,
-        tokensIn: ai.tokensIn,
-        tokensOut: ai.tokensOut,
-      });
-      // Clear any prior low-credit nudge once credits are flowing again (a charge landed).
-      if (result.charged && tenant.lowCreditNotifiedAt) {
-        await prisma.tenant.update({ where: { id: tenantId }, data: { lowCreditNotifiedAt: null } }).catch(() => {});
-      }
-      // Out of credits at charge time (window would open but no balance), or the charge
-      // drained the last credit → nudge to top up (once per low-balance episode).
-      if (!result.charged && result.windowOpen === false) {
-        await markLowCreditNudge(tenantId); // ran out between the hasCredits() gate and the charge
-      } else if (result.state && result.state.available <= 0) {
-        await markLowCreditNudge(tenantId); // just hit zero
+      // and skip this block). Spend today's FREE daily quota first; only once it's
+      // exhausted does the per-window credit charge apply (1 credit = a new 24h window).
+      const free = await consumeDailyFreeReply(tenantId);
+      if (!free) {
+        const result = await chargeAiCredit({
+          conversationId: conversation.id,
+          tenantId,
+          tokensIn: ai.tokensIn,
+          tokensOut: ai.tokensOut,
+        });
+        // Clear any prior low-credit nudge once credits are flowing again (a charge landed).
+        if (result.charged && tenant.lowCreditNotifiedAt) {
+          await prisma.tenant.update({ where: { id: tenantId }, data: { lowCreditNotifiedAt: null } }).catch(() => {});
+        }
+        // Out of credits at charge time (window would open but no balance), or the charge
+        // drained the last credit → nudge to top up (once per low-balance episode).
+        if (!result.charged && result.windowOpen === false) {
+          await markLowCreditNudge(tenantId); // ran out between the gate and the charge
+        } else if (result.state && result.state.available <= 0) {
+          await markLowCreditNudge(tenantId); // just hit zero
+        }
       }
     } else if (outOfCredits) {
       await markLowCreditNudge(tenantId);
