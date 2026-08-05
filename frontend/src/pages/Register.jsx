@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, Navigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
+import { NICHES } from '../data/niches.js';
 
 // Self-service trial signup. Creates a tenant on the 14-day trial plan and logs
 // the new owner straight in, landing them on onboarding to connect WhatsApp.
@@ -13,7 +14,7 @@ const PERKS = [
 export default function Register() {
   const { register, user } = useAuth();
   const navigate = useNavigate();
-  const [form, setForm] = useState({ businessName: '', ownerName: '', email: '', password: '' });
+  const [form, setForm] = useState({ businessName: '', ownerName: '', email: '', password: '', niche: '' });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -80,6 +81,28 @@ export default function Register() {
             <div>
               <label className="label">שם העסק</label>
               <input className="input" value={form.businessName} onChange={set('businessName')} required autoFocus />
+            </div>
+            <div>
+              <label className="label">מה תחום העסק?</label>
+              <p className="text-xs text-slate-400 mb-2">נכין לכם חשבון עם דוגמאות, תהליכים והגדרות שמתאימים בדיוק לתחום שלכם.</p>
+              <div className="grid grid-cols-2 gap-2 max-h-56 overflow-y-auto pl-1">
+                {NICHES.map((n) => (
+                  <button
+                    type="button"
+                    key={n.id}
+                    onClick={() => setForm((f) => ({ ...f, niche: n.id }))}
+                    className={`text-right rounded-xl border p-2.5 transition ${
+                      form.niche === n.id ? 'border-brand-500 ring-1 ring-brand-500 bg-brand-50/50' : 'border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-lg">{n.emoji}</span>
+                      <span className="text-sm font-medium text-ink-900 leading-tight">{n.label}</span>
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-0.5 truncate">{n.tagline}</div>
+                  </button>
+                ))}
+              </div>
             </div>
             <div>
               <label className="label">שם מלא (אופציונלי)</label>

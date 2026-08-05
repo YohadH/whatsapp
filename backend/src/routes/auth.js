@@ -6,6 +6,8 @@ import { signToken, requireAuth } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/error.js';
 import { planEntitlements } from '../lib/plans.js';
 import { seedTrialExample } from '../services/trialSeed.js';
+import { seedNichePack } from '../services/seedNichePack.js';
+import { isValidNiche } from '../data/nichePacks.js';
 
 const router = Router();
 
@@ -30,9 +32,10 @@ function slugify(s) {
 router.post(
   '/register',
   asyncHandler(async (req, res) => {
-    const { businessName, email, password, ownerName } = req.body || {};
+    const { businessName, email, password, ownerName, niche } = req.body || {};
     const name = String(businessName || '').trim();
     const cleanEmail = String(email || '').trim().toLowerCase();
+    const nicheId = isValidNiche(niche) ? niche : null;
 
     if (!name || !cleanEmail || !password) {
       return res.status(400).json({ error: 'שם העסק, אימייל וסיסמה נדרשים' });
@@ -69,6 +72,7 @@ router.post(
         trialEndsAt,
         dailyBroadcastCap: ent.dailyBroadcastCap,
         monthlyMessageLimit: ent.monthlyMessageLimit,
+        niche: nicheId,
         // Every tenant gets its own knowledge-base row up front (same as admin-provisioned).
         knowledgeBase: { create: {} },
       },
@@ -88,12 +92,14 @@ router.post(
       select: { id: true, email: true, name: true, role: true, tenantId: true, mustResetPassword: true },
     });
 
-    // Seed one ready example (flow + demo AI conversation) so the trial isn't
-    // empty. Best-effort — a seed failure must never block signup.
+    // Seed a ready starter so the trial isn't empty. A chosen niche gets its tailored
+    // pack (KB + flows + demos + tone + integration hints); otherwise the generic
+    // example. Best-effort — a seed failure must never block signup.
     try {
-      await seedTrialExample(tenant.id);
+      if (nicheId) await seedNichePack(tenant.id, nicheId);
+      else await seedTrialExample(tenant.id);
     } catch (err) {
-      console.error('[register] trial example seed failed:', err.message);
+      console.error('[register] starter seed failed:', err.message);
     }
 
     const token = signToken({ sub: user.id, email: user.email, role: user.role, tenantId: user.tenantId });
