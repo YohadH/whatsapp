@@ -173,16 +173,17 @@ const config = {
     redirectUri:
       process.env.GOOGLE_REDIRECT_URI ||
       `${(process.env.PUBLIC_BASE_URL || 'http://localhost:4000').replace(/\/$/, '')}/api/integrations/google/callback`,
-    // Calendar (read+write events) + Gmail (send + read). Kept minimal; scopes are
-    // requested at consent time and encoded into the stored token.
-    scopes: [
-      'https://www.googleapis.com/auth/calendar.events',
-      'https://www.googleapis.com/auth/calendar.readonly',
-      'https://www.googleapis.com/auth/gmail.send',
-      'https://www.googleapis.com/auth/gmail.readonly',
-      'openid',
-      'email',
-    ],
+    // Requested OAuth scopes (encoded into the token at consent time). Kept to the
+    // MINIMUM the app actually uses. Today that's Calendar only — the agent creates
+    // calendar events on booking; nothing sends or reads email. The Gmail scopes
+    // (gmail.send / gmail.readonly) are intentionally NOT requested, so the consent
+    // screen never asks for email access and the app can never touch your inbox.
+    // Add them back here (and wire sendEmail) only if/when Gmail is actually needed.
+    // Override via GOOGLE_SCOPES (space-separated) if you need a different set.
+    scopes: (process.env.GOOGLE_SCOPES ||
+      'https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.readonly openid email')
+      .split(/\s+/)
+      .filter(Boolean),
     enabled: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
   },
 
