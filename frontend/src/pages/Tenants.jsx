@@ -30,20 +30,23 @@ export default function Tenants() {
   const [editing, setEditing] = useState(null); // tenant id being edited
   const [approving, setApproving] = useState('');
   const [margin, setMargin] = useState(null); // per-tenant Meta-cost / margin view
+  const [aiUsage, setAiUsage] = useState({}); // tenantId → { aiEnabled, usedToday, dailyLimit, mode, creditsAvailable }
 
   async function load() {
-    const [t, p, es, pur, mg] = await Promise.all([
+    const [t, p, es, pur, mg, ai] = await Promise.all([
       api.get('/api/admin/tenants'),
       api.get('/api/admin/plans'),
       api.get('/api/admin/embedded-signup/config').catch(() => ({ data: { configured: false } })),
       api.get('/api/admin/credit-purchases?status=pending').catch(() => ({ data: [] })),
       api.get('/api/admin/margin').catch(() => ({ data: null })),
+      api.get('/api/admin/ai-usage').catch(() => ({ data: { items: [] } })),
     ]);
     setTenants(t.data);
     setPlans(p.data.plans || {});
     setEsConfig(es.data);
     setPending(pur.data);
     setMargin(mg.data);
+    setAiUsage(Object.fromEntries((ai.data.items || []).map((r) => [r.id, r])));
   }
   useEffect(() => { load().catch(() => setTenants([])); }, []);
 
@@ -116,6 +119,7 @@ export default function Tenants() {
                 </span>
                 {t.waPhoneNumberId && <span className="font-mono">📱 {t.waPhoneNumberId}</span>}
               </div>
+              {aiUsage[t.id] && <AiUsageLine u={aiUsage[t.id]} />}
               <div className="flex gap-2 pt-1">
                 <button className="btn-ghost text-sm" onClick={() => actAs(t)}>כניסה לדאשבורד ←</button>
                 <button className="btn-ghost text-sm" onClick={() => setEditing(t.id)}>עריכה</button>
@@ -131,6 +135,25 @@ export default function Tenants() {
       {editing && (
         <EditTenantModal tenantId={editing} plans={plans} esConfig={esConfig} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />
       )}
+    </div>
+  );
+}
+
+// Per-tenant AI activation + today's free-reply usage (from GET /api/admin/ai-usage).
+function AiUsageLine({ u }) {
+  const atCap = u.mode === 'platform' && u.usedToday >= u.dailyLimit;
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs">
+      <span className={`badge ${u.aiEnabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+        {u.aiEnabled ? '✨ AI פעיל' : 'AI כבוי'}
+      </span>
+      {u.aiEnabled && u.mode === 'platform' && (
+        <span className={atCap ? 'text-red-600 font-medium' : 'text-gray-500'}>
+          {u.usedToday}/{u.dailyLimit} תשובות היום{atCap ? ' · עבר לקרדיטים' : ''}
+        </span>
+      )}
+      {u.aiEnabled && u.mode === 'own-key' && <span className="text-gray-500">🔑 מפתח עצמאי (ללא מגבלה)</span>}
+      {u.mode === 'platform' && <span className="text-gray-400">· {u.creditsAvailable} קרדיטים</span>}
     </div>
   );
 }

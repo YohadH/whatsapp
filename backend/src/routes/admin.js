@@ -9,7 +9,8 @@ import { checkToken, finalizeWhatsAppConnection } from '../services/whatsapp.js'
 import { tenantWhatsAppCreds } from '../lib/tenantContext.js';
 import { PLANS, isValidPlan, planEntitlements } from '../lib/plans.js';
 import { connectWhatsApp, embeddedSignupPublicConfig } from '../services/embeddedSignup.js';
-import { grantCredits } from '../lib/credits.js';
+import { grantCredits, creditsState } from '../lib/credits.js';
+import { repliesToday, FREE_DAILY_AI_REPLIES } from '../lib/aiDailyQuota.js';
 import { TENANT_SELECT } from '../middleware/tenant.js';
 
 // Platform-owner (super_admin) routes for provisioning and managing tenants.
@@ -128,6 +129,42 @@ router.get(
       select: { ...TENANT_PUBLIC_SELECT, waTokenEnc: true, _count: { select: { customers: true, conversations: true, admins: true } } },
     });
     res.json(tenants.map((t) => ({ ...publicTenant(t), counts: t._count })));
+  })
+);
+
+// GET /api/admin/ai-usage → every customer's AI activation + today's free-reply usage.
+// Powers the Tenants admin page columns and the Agent Console's super-admin view.
+router.get(
+  '/ai-usage',
+  asyncHandler(async (req, res) => {
+    const tenants = await prisma.tenant.findMany({
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true, name: true, plan: true, status: true,
+        aiEnabled: true, aiDailyCount: true, aiDailyDate: true,
+        aiProvider: true, aiApiKeyEnc: true,
+        monthlyMessageLimit: true, creditsUsedThisPeriod: true, purchasedCredits: true,
+        _count: { select: { conversations: true } },
+      },
+    });
+    const items = tenants.map((t) => {
+      const byo = Boolean(t.aiProvider && t.aiApiKeyEnc);
+      return {
+        id: t.id,
+        name: t.name,
+        plan: t.plan,
+        status: t.status,
+        aiEnabled: t.aiEnabled !== false,
+        mode: byo ? 'own-key' : 'platform', // own-key tenants aren't metered by the daily cap
+        usedToday: repliesToday(t),
+        dailyLimit: FREE_DAILY_AI_REPLIES,
+        creditsAvailable: byo ? null : creditsState(t).available,
+        conversations: t._count.conversations,
+      };
+    });
+    // AI-on first, then heaviest users first — the ones worth watching float to the top.
+    items.sort((a, b) => Number(b.aiEnabled) - Number(a.aiEnabled) || b.usedToday - a.usedToday);
+    res.json({ items, dailyLimit: FREE_DAILY_AI_REPLIES });
   })
 );
 
