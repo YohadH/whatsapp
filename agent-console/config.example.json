@@ -1,0 +1,8 @@
+{
+  "port": 8790,
+  "model": "claude-opus-5",
+  "anthropicKey": "sk-ant-...   (your Anthropic key — powers the replies)",
+  "heyilSecret": "pick-any-long-random-string   (paste the SAME value into HeyIL → מוח תגובות מותאם → סוד לחתימה)",
+  "heyilBaseUrl": "https://www.heyil.co.il",
+  "heyilApiKey": "heyil_sk_...   (optional — only for the Ops API-key status card; Settings → מפתחות API)"
+}

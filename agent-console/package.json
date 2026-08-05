@@ -1,0 +1,21 @@
+{
+  "name": "heyil-agent-console",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local control panel + reply-provider endpoint for HeyIL agents. Runs on your machine only; never deployed.",
+  "bin": "console.cjs",
+  "scripts": {
+    "start": "node console.cjs",
+    "build": "pkg console.cjs --targets node18-win-x64 --output dist/HeyIL-Agent-Console.exe"
+  },
+  "pkg": {
+    "assets": [],
+    "targets": [
+      "node18-win-x64"
+    ],
+    "outputPath": "dist"
+  },
+  "devDependencies": {
+    "pkg": "^5.8.1"
+  }
+}
