@@ -143,6 +143,8 @@ function AiProvider() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [err, setErr] = useState('');
+  const [enabled, setEnabled] = useState(false); // master switch (opt-in)
+  const [toggling, setToggling] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const load = () =>
@@ -150,7 +152,17 @@ function AiProvider() {
       setCfg(r.data);
       setProvider(r.data.provider || 'platform');
       setModel(r.data.model || '');
+      setEnabled(r.data.enabled !== false);
     }).catch(() => {}).finally(() => setLoading(false));
+
+  async function toggleEnabled(next) {
+    setToggling(true);
+    try {
+      await api.put('/api/settings/ai-enabled', { enabled: next });
+      setEnabled(next);
+      load();
+    } catch { /* keep prior state */ } finally { setToggling(false); }
+  }
   useEffect(() => { load(); }, []);
 
   function pickProvider(p) {
@@ -184,9 +196,34 @@ function AiProvider() {
   return (
     <div className="card mt-4">
       <h3 className="font-semibold mb-1">מנוע הבינה המלאכותית</h3>
+
+      {/* Master switch — automatic AI replies are opt-in. */}
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 my-3">
+        <div>
+          <div className="font-medium text-sm">מענה AI אוטומטי {enabled ? <span className="text-green-600 text-xs">פעיל</span> : <span className="text-slate-400 text-xs">כבוי</span>}</div>
+          <div className="text-xs text-slate-400 mt-0.5">
+            {enabled ? 'הסוכן עונה ללקוחות אוטומטית מתוך מאגר הידע והתהליכים.' : 'כבוי — הסוכן לא עונה ללקוחות עד שתפעילו את המענה.'}
+            {enabled && cfg && !cfg.byo && (
+              <> {' '}· היום נוצלו <b>{cfg.usedToday}/{cfg.dailyLimit}</b> תשובות חינם, ומעבר לכך נצרכים קרדיטים.</>
+            )}
+            {enabled && cfg?.byo && <> {' '}· רץ על מפתח ה-API שלכם (ללא מגבלה יומית).</>}
+          </div>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={enabled}
+          disabled={toggling}
+          onClick={() => toggleEnabled(!enabled)}
+          className={`relative w-12 h-7 rounded-full transition flex-none ${enabled ? 'bg-brand-500' : 'bg-slate-300'} ${toggling ? 'opacity-60' : ''}`}
+        >
+          <span className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow transition-all ${enabled ? 'left-1' : 'right-1'}`} />
+        </button>
+      </div>
+
       <p className="text-xs text-slate-400 mb-4">
-        כברירת מחדל הסוכן עובד על מנוע ה-AI שלנו (נצרך מקרדיטים). ניתן לחבר מפתח API משלכם — או-פן-איי או Claude —
-        ואז השיחות ירוצו על החשבון שלכם ולא ינוכו קרדיטים.
+        כברירת מחדל הסוכן עובד על מנוע ה-AI שלנו (נצרך מקרדיטים, לאחר 10 תשובות חינם ביום). ניתן לחבר מפתח API משלכם —
+        או-פן-איי או Claude — ואז השיחות ירוצו על החשבון שלכם ללא מגבלה יומית ולא ינוכו קרדיטים.
       </p>
       <form onSubmit={save} className="space-y-4 max-w-2xl">
         <div className="grid sm:grid-cols-3 gap-2">

@@ -3,6 +3,7 @@ import prisma from '../lib/prisma.js';
 import config from '../config/index.js';
 import { asyncHandler } from '../middleware/error.js';
 import { encryptSecret } from '../lib/crypto.js';
+import { repliesToday, FREE_DAILY_AI_REPLIES } from '../lib/aiDailyQuota.js';
 import { checkToken } from '../services/whatsapp.js';
 import { tenantWhatsAppCreds } from '../lib/tenantContext.js';
 import { connectWhatsApp, embeddedSignupPublicConfig } from '../services/embeddedSignup.js';
@@ -104,14 +105,31 @@ router.get(
   asyncHandler(async (req, res) => {
     const t = await prisma.tenant.findUnique({
       where: { id: req.tenantId },
-      select: { aiProvider: true, aiModel: true, aiApiKeyEnc: true },
+      select: { aiProvider: true, aiModel: true, aiApiKeyEnc: true, aiEnabled: true, aiDailyCount: true, aiDailyDate: true },
     });
+    const byo = Boolean(t?.aiProvider && t?.aiApiKeyEnc);
     res.json({
       providers: AI_PROVIDERS,
       provider: t?.aiProvider || 'platform',
       model: t?.aiModel || '',
       hasKey: Boolean(t?.aiApiKeyEnc),
+      // Master switch + today's free-reply usage (so the owner sees "used 3/10 today").
+      // BYO-key tenants pay their own provider, so the daily cap doesn't apply to them.
+      enabled: t?.aiEnabled !== false,
+      byo,
+      dailyLimit: FREE_DAILY_AI_REPLIES,
+      usedToday: repliesToday(t),
     });
+  })
+);
+
+// Toggle automatic AI replies on/off (the opt-in master switch).
+router.put(
+  '/ai-enabled',
+  asyncHandler(async (req, res) => {
+    const enabled = req.body?.enabled === true || req.body?.enabled === 'true';
+    await prisma.tenant.update({ where: { id: req.tenantId }, data: { aiEnabled: enabled } });
+    res.json({ enabled });
   })
 );
 
