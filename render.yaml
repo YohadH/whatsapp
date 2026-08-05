@@ -51,6 +51,17 @@ services:
         sync: false
       - key: OPENAI_MODEL
         value: gpt-4o-mini
+      # ── Google integration (Gmail/Calendar/Sheets add-on) ──
+      # OAuth client from Google Cloud Console. Leave unset to keep the feature OFF
+      # (Settings → אינטגרציות shows Google as "בקרוב" until these are present).
+      # GOOGLE_REDIRECT_URI must EXACTLY match the redirect URI registered in Google
+      # AND this service's public URL, e.g. https://heyil.co.il/api/integrations/google/callback
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REDIRECT_URI
+        sync: false
       # ── WhatsApp Cloud API (master / fallback account) ──
       # In multi-tenant operation each tenant stores its own credentials; these
       # env creds are the master fallback and seed the default tenant on migration.
