@@ -14,3 +14,8 @@ backend/Whatsapp.zip
 
 # Local QA screenshot artifacts (not source)
 qa_screens/
+
+# Agent Console — a LOCAL operator tool, deliberately kept OUT of the repo so it is
+# never built or deployed by Render. It lives on its own outside this folder
+# (e.g. D:\whatsap console agent\agent-console). Never re-add it here.
+/agent-console/
