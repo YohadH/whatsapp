@@ -1,6 +1,7 @@
 import prisma from '../lib/prisma.js';
 import config from '../config/index.js';
 import { generateAgentResponse, ruleBasedResponse } from './aiAgent.js';
+import { aiConfigured } from './llm.js';
 import { sendWhatsAppMessage, sendWhatsAppAudio, sendWhatsAppImage } from './whatsapp.js';
 import { tenantWhatsAppCreds } from '../lib/tenantContext.js';
 import { hasCredits, markLowCreditNudge, spendOneCredit } from '../lib/credits.js';
@@ -609,6 +610,83 @@ export async function handleIncomingMessage({ tenant, phone: rawPhone, text, nam
         // Pipeline passed / is down → no charge; hand off to a human (safety net).
         agentResponse.needs_human = true;
       }
+    }
+  }
+
+  // Platform-OpenAI fallback (REGRESSION FIX — board task
+  // whatsapp-agent-bug-non-byo-tenants-lose-all). Before the "local-Claude pipeline as
+  // primary engine" change, a non-BYO tenant with aiEnabled:true always got a real
+  // AI-generated reply from the platform OpenAI key (services/llm.js resolveProvider →
+  // platformOpenai). Commit e38d77c hardcoded allowAI = aiOn && !!byoKey above and moved
+  // metering onto the pipeline path, so the platform-OpenAI path became UNREACHABLE for
+  // non-BYO tenants. With PlatformConfig.replyEnabled defaulting to false (migration 20),
+  // EVERY existing non-BYO tenant silently degraded to rules-only replies.
+  //
+  // This restores the platform-OpenAI path as the fallback BELOW the pipeline (matching
+  // the intended order: BYO key → local-Claude pipeline → platform OpenAI → rules-only).
+  // It only fires when the reply is STILL rules-based (replyVia==='rules') after the
+  // pipeline block — i.e. the pipeline was disabled, passed, or is down — so it never
+  // double-answers a pipeline reply and never overrides a deterministic flow step
+  // (replyVia 'flow'). aiConfigured(tenant) is true here iff a platform OpenAI key exists
+  // (config.openai.enabled) — no key ⇒ this is a no-op and we keep the rules/handoff path.
+  //
+  // Metering is UNIFORM with the pipeline path (consumeDailyFreeReply → spendOneCredit):
+  // one AI reply = one free daily slot, else exactly 1 credit — so a non-BYO tenant is
+  // NEVER double-charged (the pipeline block already returned without answering when we
+  // reach here). We gate on free-slot-or-credits BEFORE calling OpenAI and meter only
+  // AFTER a real reply, so a failed/rules fallback is never charged.
+  if (replyVia === 'rules' && aiOn && !byoKey && aiConfigured(tenant)) {
+    const canAnswer = hasFreeQuotaToday(tenant) || (await hasCredits(tenantId));
+    if (!canAnswer) {
+      // Over the daily cap and no credits → don't spend platform OpenAI on our bill; keep
+      // the rules/handoff reply. (Mirror the pipeline block's out-of-credits handling.)
+      outOfCredits = true;
+      agentResponse.needs_human = true;
+      await markLowCreditNudge(tenantId);
+    } else {
+      const { response: llm, ai } = await generateAgentResponse(ctx, { allowAI: true });
+      // ai.used && ai.billable ⇒ a real reply came back on the PLATFORM key (BYO is
+      // filtered out by !byoKey above, so billable is the only shape reachable here).
+      if (ai.used && ai.billable) {
+        const free = await consumeDailyFreeReply(tenantId);
+        if (!free) await spendOneCredit({ tenantId, reason: 'ai_reply' });
+        else if (tenant.lowCreditNotifiedAt) await prisma.tenant.update({ where: { id: tenantId }, data: { lowCreditNotifiedAt: null } }).catch(() => {});
+        // The LLM may have detected the customer wants to START a flow → run it
+        // deterministically (visible text = the flow question, tagged as bot), exactly
+        // like the BYO branch above. Otherwise use the LLM's KB answer.
+        const wantsToStart =
+          llm.flow_id &&
+          flows.some((f) => f.id === llm.flow_id) &&
+          (llm.next_action === 'ask_next_question' || llm.intent === 'predefined_flow_start');
+        if (wantsToStart) {
+          ctx.state.startFlowId = llm.flow_id;
+          agentResponse = ruleBasedResponse(ctx);
+          replyText = agentResponse.reply;
+          replyVia = 'flow';
+        } else {
+          agentResponse = llm;
+          replyText = llm.reply;
+          replyVia = 'ai'; // real AI text → inbox shows "✨ סוכן AI"
+        }
+        // Re-append a trackable link if the LLM's fresh reply asks to send one.
+        if (agentResponse.next_action === 'send_link') {
+          const trackable = await resolveTrackableLink(tenantId, agentResponse, conversation.id);
+          if (trackable) {
+            replyText = `${replyText}\n${trackable.url}`;
+            linkSent = true;
+            await trackEvent(EVENTS.LINK_SENT, {
+              tenantId,
+              conversationId: conversation.id,
+              customerId: customer.id,
+              customerPhone: phone,
+              flowId: agentResponse.flow_id,
+              metadata: { linkId: trackable.linkId, url: trackable.target },
+            });
+          }
+        }
+      }
+      // If the LLM call failed (ai.used===false), generateAgentResponse already fell back
+      // to ruleBasedResponse internally; we keep the existing rules reply — no charge.
     }
   }
 
