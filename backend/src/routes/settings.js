@@ -46,9 +46,9 @@ router.get(
     // req.tenant comes from TENANT_SELECT (no name); read the fields directly.
     const t = await prisma.tenant.findUnique({
       where: { id: req.tenantId },
-      select: { name: true, ownerPhone: true, logoUrl: true },
+      select: { name: true, ownerPhone: true, logoUrl: true, niche: true },
     });
-    res.json({ name: t?.name || '', ownerPhone: t?.ownerPhone || '', logoUrl: t?.logoUrl || '' });
+    res.json({ name: t?.name || '', ownerPhone: t?.ownerPhone || '', logoUrl: t?.logoUrl || '', niche: t?.niche || '' });
   })
 );
 
@@ -76,8 +76,15 @@ router.put(
       if (url.length > 500) return res.status(400).json({ error: 'כתובת הלוגו ארוכה מדי' });
       data.logoUrl = url || null;
     }
+    // niche (optional): the business vertical → drives per-niche integration recos.
+    // Only the field is changed here; existing content (KB/flows) is left intact.
+    if ('niche' in (req.body || {})) {
+      const n = String(req.body.niche || '');
+      if (n && !getNichePack(n)) return res.status(400).json({ error: 'תחום לא מוכר' });
+      data.niche = n || null;
+    }
     const t = await prisma.tenant.update({ where: { id: req.tenantId }, data });
-    res.json({ name: t.name, ownerPhone: t.ownerPhone || '', logoUrl: t.logoUrl || '' });
+    res.json({ name: t.name, ownerPhone: t.ownerPhone || '', logoUrl: t.logoUrl || '', niche: t.niche || '' });
   })
 );
 

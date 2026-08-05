@@ -3,6 +3,7 @@ import api from '../api/client.js';
 import { PageHeader } from '../components/Layout.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { launchEmbeddedSignup } from '../lib/fbEmbeddedSignup.js';
+import { NICHES } from '../data/niches.js';
 
 // Settings sections — surfaced as a side nav (desktop) / scrollable tab bar
 // (mobile). Keeps a long page organized and works on iPhone + Android.
@@ -230,6 +231,7 @@ function BusinessProfile() {
   const [name, setName] = useState('');
   const [ownerPhone, setOwnerPhone] = useState('');
   const [logoUrl, setLogoUrl] = useState('');
+  const [niche, setNiche] = useState('');
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -238,7 +240,7 @@ function BusinessProfile() {
 
   useEffect(() => {
     api.get('/api/settings/profile')
-      .then((r) => { setName(r.data.name || ''); setOwnerPhone(r.data.ownerPhone || ''); setLogoUrl(r.data.logoUrl || ''); })
+      .then((r) => { setName(r.data.name || ''); setOwnerPhone(r.data.ownerPhone || ''); setLogoUrl(r.data.logoUrl || ''); setNiche(r.data.niche || ''); })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
@@ -273,7 +275,7 @@ function BusinessProfile() {
     setSaved(false);
     setSaving(true);
     try {
-      const r = await api.put('/api/settings/profile', { name: name.trim(), ownerPhone: ownerPhone.trim(), logoUrl });
+      const r = await api.put('/api/settings/profile', { name: name.trim(), ownerPhone: ownerPhone.trim(), logoUrl, niche });
       setOwnerPhone(r.data.ownerPhone || '');
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
@@ -317,6 +319,16 @@ function BusinessProfile() {
         <div>
           <label className="label">שם העסק</label>
           <input className="input" value={name} onChange={(e) => setName(e.target.value)} required />
+        </div>
+        <div>
+          <label className="label">תחום העסק</label>
+          <select className="input" value={niche} onChange={(e) => setNiche(e.target.value)}>
+            <option value="">— בחרו תחום —</option>
+            {NICHES.map((n) => (
+              <option key={n.id} value={n.id}>{n.emoji} {n.label}</option>
+            ))}
+          </select>
+          <p className="text-xs text-slate-400 mt-1">משפיע על ההמלצות לחיבורים (יומן / CRM) בהתאם לתחום. לא משנה את מאגר הידע והתהליכים הקיימים.</p>
         </div>
         <div>
           <label className="label">הוואטסאפ האישי של בעל/ת העסק</label>
