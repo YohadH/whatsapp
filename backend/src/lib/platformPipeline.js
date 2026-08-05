@@ -44,6 +44,8 @@ export async function effectiveReplyProvider(tenant) {
   const own = replyProviderConfig(tenant);
   if (own) return { ...own, enabled: true, source: 'tenant' };
   const plat = await getPlatformPipeline();
-  if (plat) return { url: plat.url, secret: plat.secret, timeoutMs: 30000, consultOn: 'always', enabled: true, source: 'platform' };
+  // 90s timeout: the central brain may run Claude via the local CLI (subscription) which
+  // takes ~10–40s/reply — well under Cloudflare's ~100s tunnel limit.
+  if (plat) return { url: plat.url, secret: plat.secret, timeoutMs: 90000, consultOn: 'always', enabled: true, source: 'platform' };
   return null;
 }
