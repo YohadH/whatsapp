@@ -97,8 +97,10 @@ function normalize(data) {
 // Consult the tenant's reply provider. Returns the normalized reply object on
 // success, or null to signal FALLBACK (not configured / unsafe / non-2xx /
 // timeout / invalid / pass). Never throws.
-export async function generateViaProvider(tenant, ctx) {
-  const rp = replyProviderConfig(tenant);
+export async function generateViaProvider(tenant, ctx, explicitCfg = null) {
+  // explicitCfg lets the caller pass the EFFECTIVE provider (the tenant's own OR the
+  // platform default pipeline). Falls back to the tenant's own config when omitted.
+  const rp = explicitCfg || replyProviderConfig(tenant);
   if (!rp) return null;
   if (!(await isSafeWebhookUrl(rp.url))) {
     console.warn('[replyProvider] rejected unsafe/non-HTTPS url');

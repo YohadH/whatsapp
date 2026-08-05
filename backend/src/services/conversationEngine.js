@@ -3,15 +3,16 @@ import config from '../config/index.js';
 import { generateAgentResponse, ruleBasedResponse } from './aiAgent.js';
 import { sendWhatsAppMessage, sendWhatsAppAudio, sendWhatsAppImage } from './whatsapp.js';
 import { tenantWhatsAppCreds } from '../lib/tenantContext.js';
-import { hasCredits, chargeAiCredit, markLowCreditNudge } from '../lib/credits.js';
+import { hasCredits, markLowCreditNudge, spendOneCredit } from '../lib/credits.js';
 import { trackEvent, EVENTS } from './analytics.js';
 import { computeLeadScore } from './leadScore.js';
 import { notifyOwnerHandoff } from './handoffNotify.js';
 import { deliverLeadEvent } from './outboundWebhook.js';
 import { normalizePhone } from '../lib/phone.js';
 import { createCalendarEvent } from './googleIntegration.js';
-import { generateViaProvider, replyProviderConfig } from './replyProvider.js';
+import { generateViaProvider } from './replyProvider.js';
 import { hasFreeQuotaToday, consumeDailyFreeReply } from '../lib/aiDailyQuota.js';
+import { effectiveReplyProvider } from '../lib/platformPipeline.js';
 
 // Create a Google Calendar event from an agent-extracted booking. BEST-EFFORT and
 // fire-and-forget: if the Calendar integration isn't configured/enabled/connected,
@@ -477,47 +478,18 @@ export async function handleIncomingMessage({ tenant, phone: rawPhone, text, nam
     ctx.state.startFlowId = suggestedFlow.id;
     agentResponse = ruleBasedResponse(ctx);
   } else {
-    // No flow context → ask the LLM (KB answer or conversational start). A tenant on
-    // its OWN AI key (BYO — services/llm.js) bypasses the credit gate entirely; it
-    // pays its provider directly, so credits never apply. Platform-key tenants still
-    // gate on credits: out of credits → rule-based reply, no charge.
+    // No flow context. Reply-engine PRIORITY (system-wide "local Claude for everyone"):
+    //   1) the tenant's OWN AI key (BYO) → built-in AI on their key, unmetered;
+    //   2) otherwise → the central local-Claude pipeline (run AFTER lead scoring below,
+    //      metered by the 10/day free quota → 1 credit/reply over the cap).
+    // So we only call the built-in cloud AI for BYO tenants; everyone else gets a
+    // rule-based skeleton here and the pipeline fills in the real reply downstream —
+    // which is why no platform OpenAI key is needed.
     const byoKey = tenant.aiProvider && tenant.aiApiKeyEnc;
-    // Master switch: automatic AI replies are opt-in per tenant (new signups start OFF,
-    // activated in Settings). When off, never call the LLM — fall back to rules.
     const aiOn = tenant.aiEnabled !== false;
-    // Platform-key tenants get FREE_DAILY_AI_REPLIES free AI replies/day before any
-    // credit is spent; BYO-key tenants pay their own provider, so the cap never applies.
-    const underFreeQuota = aiOn && !byoKey && hasFreeQuotaToday(tenant);
-    const allowAI = aiOn && (byoKey || underFreeQuota || (await hasCredits(tenantId)));
-    outOfCredits = aiOn && !byoKey && !allowAI;
+    const allowAI = aiOn && !!byoKey; // built-in AI runs ONLY on a tenant's own key
     const { response: llm, ai } = await generateAgentResponse(ctx, { allowAI });
-    if (ai.used && ai.billable) {
-      // A PLATFORM-key LLM reply was produced (BYO-key replies are ai.billable:false
-      // and skip this block). Spend today's FREE daily quota first; only once it's
-      // exhausted does the per-window credit charge apply (1 credit = a new 24h window).
-      const free = await consumeDailyFreeReply(tenantId);
-      if (!free) {
-        const result = await chargeAiCredit({
-          conversationId: conversation.id,
-          tenantId,
-          tokensIn: ai.tokensIn,
-          tokensOut: ai.tokensOut,
-        });
-        // Clear any prior low-credit nudge once credits are flowing again (a charge landed).
-        if (result.charged && tenant.lowCreditNotifiedAt) {
-          await prisma.tenant.update({ where: { id: tenantId }, data: { lowCreditNotifiedAt: null } }).catch(() => {});
-        }
-        // Out of credits at charge time (window would open but no balance), or the charge
-        // drained the last credit → nudge to top up (once per low-balance episode).
-        if (!result.charged && result.windowOpen === false) {
-          await markLowCreditNudge(tenantId); // ran out between the gate and the charge
-        } else if (result.state && result.state.available <= 0) {
-          await markLowCreditNudge(tenantId); // just hit zero
-        }
-      }
-    } else if (outOfCredits) {
-      await markLowCreditNudge(tenantId);
-    }
+    // BYO replies are ai.billable:false → no platform credit charge, no daily cap.
     const wantsToStart =
       llm.flow_id &&
       flows.some((f) => f.id === llm.flow_id) &&
@@ -528,7 +500,7 @@ export async function handleIncomingMessage({ tenant, phone: rawPhone, text, nam
       ctx.state.startFlowId = llm.flow_id;
       agentResponse = ruleBasedResponse(ctx);
     } else {
-      agentResponse = llm; // pure knowledge-base answer / chit-chat
+      agentResponse = llm; // BYO KB answer, or a rule-based skeleton (pipeline fills in)
       replyVia = ai.used ? 'ai' : 'rules';
     }
   }
@@ -602,21 +574,41 @@ export async function handleIncomingMessage({ tenant, phone: rawPhone, text, nam
   });
   agentResponse.lead_score = leadScore;
 
-  // Escalation brain: when the built-in bot is NOT ENOUGH (needs_human) — or in
-  // 'always' mode — and the tenant configured an external reply provider (a local
-  // Claude over an HTTPS tunnel), consult it before handing off to a human. If it
-  // returns a reply we use it and CANCEL the hand-off; otherwise we fall back to the
-  // normal needs_human path. Best-effort (never throws / never blocks a reply).
-  const rpCfg = replyProviderConfig(tenant);
-  if (rpCfg && (agentResponse.needs_human || rpCfg.consultOn === 'always')) {
-    const provided = await generateViaProvider(tenant, { conversation, customer, phone, text, history, kb, flows });
-    if (provided?.reply) {
-      agentResponse.reply = provided.reply;
-      replyText = provided.reply; // the provider owns its full reply text (incl. any link)
-      replyVia = 'ai'; // it's the owner's custom AI → inbox shows "✨ סוכן AI"
-      agentResponse.needs_human = provided.needs_human === true;
-      if (provided.conversation_status) agentResponse.conversation_status = provided.conversation_status;
-      if (provided.calendar_event !== undefined) agentResponse.calendar_event = provided.calendar_event;
+  // Local-Claude pipeline = the PRIMARY free-form reply engine for tenants WITHOUT their
+  // own AI key. (BYO tenants were already answered on their own key above; deterministic
+  // flow steps — replyVia 'flow' — are never overridden.) The effective provider is the
+  // tenant's own reply-provider if set, else the platform-wide default pipeline.
+  //
+  // Metering (revenue-safe): the first 10 replies/day/customer are free; beyond that each
+  // reply costs exactly 1 credit (priced above the per-reply model cost). We gate BEFORE
+  // answering (free slot OR credits available) and meter only AFTER a real reply comes
+  // back, so a pass/timeout is never charged. Over the cap with no credits → hand off.
+  const byoKey = tenant.aiProvider && tenant.aiApiKeyEnc;
+  const aiOn = tenant.aiEnabled !== false;
+  const pipeline = aiOn && !byoKey && replyVia === 'rules' ? await effectiveReplyProvider(tenant) : null;
+  if (pipeline?.enabled) {
+    const canAnswer = hasFreeQuotaToday(tenant) || (await hasCredits(tenantId));
+    if (!canAnswer) {
+      outOfCredits = true;
+      agentResponse.needs_human = true; // over the daily cap and no credits → human handoff
+      await markLowCreditNudge(tenantId);
+    } else {
+      const provided = await generateViaProvider(tenant, { conversation, customer, phone, text, history, kb, flows }, pipeline);
+      if (provided?.reply) {
+        // Meter only on a real answer: consume a free daily slot, else charge 1 credit.
+        const free = await consumeDailyFreeReply(tenantId);
+        if (!free) await spendOneCredit({ tenantId, reason: 'ai_reply' });
+        else if (tenant.lowCreditNotifiedAt) await prisma.tenant.update({ where: { id: tenantId }, data: { lowCreditNotifiedAt: null } }).catch(() => {});
+        agentResponse.reply = provided.reply;
+        replyText = provided.reply; // the provider owns its full reply text (incl. any link)
+        replyVia = 'ai'; // real AI text → inbox shows "✨ סוכן AI"
+        agentResponse.needs_human = provided.needs_human === true;
+        if (provided.conversation_status) agentResponse.conversation_status = provided.conversation_status;
+        if (provided.calendar_event !== undefined) agentResponse.calendar_event = provided.calendar_event;
+      } else {
+        // Pipeline passed / is down → no charge; hand off to a human (safety net).
+        agentResponse.needs_human = true;
+      }
     }
   }
 

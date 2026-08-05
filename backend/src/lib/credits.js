@@ -214,6 +214,40 @@ export async function chargeAiCredit({
   });
 }
 
+// Spend EXACTLY ONE credit for a single AI reply (used by the local-Claude pipeline
+// once a tenant is over its daily free quota — 1 credit per reply, which is priced
+// above the per-reply model cost so credit usage is revenue-positive). Unlike
+// chargeAiCredit this is NOT window-based: every over-cap reply costs one credit.
+// Monthly allotment first, then purchased; each an atomic conditional UPDATE so it can
+// never overspend under concurrency. Returns { charged, state }.
+export async function spendOneCredit({ tenantId, reason = 'ai_reply', messageId = null }) {
+  return prisma.$transaction(async (tx) => {
+    let branch = null;
+    const monthlyRows = await tx.$executeRaw`
+      UPDATE "Tenant"
+         SET "creditsUsedThisPeriod" = "creditsUsedThisPeriod" + 1
+       WHERE "id" = ${tenantId}
+         AND "creditsUsedThisPeriod" < "monthlyMessageLimit"`;
+    if (monthlyRows === 1) {
+      branch = 'monthly';
+    } else {
+      const purchasedRows = await tx.$executeRaw`
+        UPDATE "Tenant"
+           SET "purchasedCredits" = "purchasedCredits" - 1
+         WHERE "id" = ${tenantId}
+           AND "purchasedCredits" > 0`;
+      if (purchasedRows === 1) branch = 'purchased';
+    }
+    if (!branch) return { charged: false, state: null };
+    await tx.creditTransaction.create({ data: { tenantId, type: 'debit', amount: -1, reason, messageId } });
+    const t = await tx.tenant.findUnique({
+      where: { id: tenantId },
+      select: { monthlyMessageLimit: true, creditsUsedThisPeriod: true, purchasedCredits: true },
+    });
+    return { charged: true, state: creditsState(t) };
+  }, { maxWait: 5000, timeout: 10000 });
+}
+
 // Add credits to the non-resetting purchased balance (top-up / manual grant / adjust)
 // and record a ledger entry. `amount` may be negative for a corrective adjustment.
 export async function grantCredits({ tenantId, amount, type = 'grant', reason = null }) {

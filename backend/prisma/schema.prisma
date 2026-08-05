@@ -700,3 +700,16 @@ model KnowledgeBase {
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 }
+
+// Platform-level config singleton (MIGRATION 20_platform_config). Holds the CENTRAL
+// local-Claude pipeline — one URL + signing secret set once by the platform owner —
+// that answers every opted-in customer who hasn't brought their own AI key. Read at
+// runtime by lib/platformPipeline.js; edited by super-admin. Always the single row id='singleton'.
+model PlatformConfig {
+  id             String   @id @default("singleton")
+  replyEnabled   Boolean  @default(false)
+  replyUrl       String?
+  replySecretEnc String? // signing secret, AES-256-GCM at rest (lib/crypto.js)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}

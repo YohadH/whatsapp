@@ -11,6 +11,7 @@ import { PLANS, isValidPlan, planEntitlements } from '../lib/plans.js';
 import { connectWhatsApp, embeddedSignupPublicConfig } from '../services/embeddedSignup.js';
 import { grantCredits, creditsState } from '../lib/credits.js';
 import { repliesToday, FREE_DAILY_AI_REPLIES } from '../lib/aiDailyQuota.js';
+import { invalidatePlatformPipelineCache } from '../lib/platformPipeline.js';
 import { TENANT_SELECT } from '../middleware/tenant.js';
 
 // Platform-owner (super_admin) routes for provisioning and managing tenants.
@@ -165,6 +166,36 @@ router.get(
     // AI-on first, then heaviest users first — the ones worth watching float to the top.
     items.sort((a, b) => Number(b.aiEnabled) - Number(a.aiEnabled) || b.usedToday - a.usedToday);
     res.json({ items, dailyLimit: FREE_DAILY_AI_REPLIES });
+  })
+);
+
+// GET /api/admin/platform-pipeline → the CENTRAL local-Claude pipeline config (the one
+// brain that answers every opted-in customer without their own AI key).
+router.get(
+  '/platform-pipeline',
+  asyncHandler(async (req, res) => {
+    const row = await prisma.platformConfig.findUnique({ where: { id: 'singleton' } });
+    res.json({ enabled: !!row?.replyEnabled, url: row?.replyUrl || '', hasSecret: !!row?.replySecretEnc });
+  })
+);
+
+// PUT /api/admin/platform-pipeline { enabled, url, secret? } → set the central pipeline.
+// Secret is optional on update (keep the stored one if omitted); stored encrypted.
+router.put(
+  '/platform-pipeline',
+  asyncHandler(async (req, res) => {
+    const enabled = req.body?.enabled === true || req.body?.enabled === 'true';
+    const url = typeof req.body?.url === 'string' ? req.body.url.trim() : '';
+    const data = { replyEnabled: enabled, replyUrl: url || null };
+    const rawSecret = typeof req.body?.secret === 'string' ? req.body.secret.trim() : '';
+    if (rawSecret) data.replySecretEnc = encryptSecret(rawSecret);
+    const row = await prisma.platformConfig.upsert({
+      where: { id: 'singleton' },
+      update: data,
+      create: { id: 'singleton', ...data },
+    });
+    invalidatePlatformPipelineCache(); // so the change takes effect on the next reply
+    res.json({ enabled: row.replyEnabled, url: row.replyUrl || '', hasSecret: !!row.replySecretEnc });
   })
 );
 

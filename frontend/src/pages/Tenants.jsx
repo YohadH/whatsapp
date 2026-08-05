@@ -93,6 +93,8 @@ export default function Tenants() {
         </div>
       )}
 
+      <PlatformPipelineCard />
+
       {margin && margin.rows && (
         <MarginTable margin={margin} />
       )}
@@ -135,6 +137,64 @@ export default function Tenants() {
       {editing && (
         <EditTenantModal tenantId={editing} plans={plans} esConfig={esConfig} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />
       )}
+    </div>
+  );
+}
+
+// The CENTRAL local-Claude pipeline: one endpoint that answers every opted-in customer
+// who hasn't brought their own AI key. Set the tunnel URL + signing secret once here.
+function PlatformPipelineCard() {
+  const [cfg, setCfg] = useState(null);
+  const [enabled, setEnabled] = useState(false);
+  const [url, setUrl] = useState('');
+  const [secret, setSecret] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [err, setErr] = useState('');
+
+  const load = () => api.get('/api/admin/platform-pipeline').then((r) => {
+    setCfg(r.data); setEnabled(!!r.data.enabled); setUrl(r.data.url || '');
+  }).catch(() => setCfg({ enabled: false, url: '', hasSecret: false }));
+  useEffect(() => { load(); }, []);
+
+  async function save(e) {
+    e.preventDefault(); setErr(''); setSaved(false); setSaving(true);
+    try {
+      await api.put('/api/admin/platform-pipeline', { enabled, url: url.trim(), secret: secret.trim() || undefined });
+      setSecret(''); setSaved(true); setTimeout(() => setSaved(false), 2500); load();
+    } catch (ex) { setErr(ex.response?.data?.error || 'השמירה נכשלה'); } finally { setSaving(false); }
+  }
+
+  if (!cfg) return null;
+  return (
+    <div className="card mb-4">
+      <div className="flex items-center justify-between gap-3 mb-1">
+        <div className="font-semibold text-sm">🧠 מוח ה-AI המרכזי (Claude מקומי)</div>
+        <span className={`badge ${enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{enabled ? 'פעיל' : 'כבוי'}</span>
+      </div>
+      <p className="text-xs text-gray-500 mb-3">
+        נקודת קצה אחת (ה-Claude המקומי שלכם דרך tunnel) שעונה לכל הלקוחות שהפעילו AI ואין להם מפתח משלהם.
+        ללא מפתחות ענן. 10 תשובות חינם ליום ללקוח, ומעבר לכך קרדיט לכל תשובה. אם המחשב/tunnel כבוי — הלקוח עובר לנציג.
+      </p>
+      <form onSubmit={save} className="space-y-3 max-w-2xl">
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+          הפעלת המוח המרכזי לכל הלקוחות
+        </label>
+        <div>
+          <label className="label">כתובת ה-endpoint (HTTPS)</label>
+          <input className="input" dir="ltr" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://xxxx.trycloudflare.com/reply" />
+        </div>
+        <div>
+          <label className="label">סוד לחתימה {cfg.hasSecret && <span className="text-green-600 text-xs">(שמור ✓)</span>}</label>
+          <input className="input" dir="ltr" type="password" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder={cfg.hasSecret ? '•••••••• (מלאו רק כדי להחליף)' : 'אותו ערך כמו ב-config.json של הקונסולה'} />
+        </div>
+        {err && <div className="text-sm text-red-600 bg-red-50 rounded-lg p-2">{err}</div>}
+        <div className="flex items-center gap-2">
+          <button className="btn-primary" disabled={saving}>{saving ? 'שומר…' : 'שמירה'}</button>
+          {saved && <span className="text-green-600 text-sm">נשמר ✓</span>}
+        </div>
+      </form>
     </div>
   );
 }
