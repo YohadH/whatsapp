@@ -343,6 +343,7 @@ function Integrations({ google }) {
   const [catalog, setCatalog] = useState(null);
   const [enabled, setEnabled] = useState({});
   const [config, setConfig] = useState({});
+  const [nicheLabel, setNicheLabel] = useState(null);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -353,7 +354,7 @@ function Integrations({ google }) {
 
   const reload = () =>
     api.get('/api/settings/integrations')
-      .then((r) => { setCatalog(r.data.catalog); setEnabled(r.data.enabled || {}); setConfig(r.data.config || {}); })
+      .then((r) => { setCatalog(r.data.catalog); setEnabled(r.data.enabled || {}); setConfig(r.data.config || {}); setNicheLabel(r.data.nicheLabel || null); })
       .catch(() => setCatalog([]));
   useEffect(() => { reload(); }, []);
 
@@ -385,6 +386,15 @@ function Integrations({ google }) {
     <div className="card mt-4">
       <h3 className="font-semibold mb-1">🔌 אינטגרציות וחיבורים</h3>
       <p className="text-sm text-gray-500 mb-4">הפעילו או כבו חיבורים למערכות חיצוניות — אפשר לערוך בכל רגע.</p>
+      {(() => {
+        const must = (catalog || []).filter((it) => it.recommended === 'must');
+        if (!must.length) return null;
+        return (
+          <div className="rounded-lg bg-brand-50 text-brand-700 text-sm p-3 mb-3">
+            ⭐ מומלץ לתחום שלך{nicheLabel ? ` (${nicheLabel})` : ''}: חברו את <b>{must.map((m) => m.label).join(', ')}</b> — זה מה שייתן לסוכן שלכם את הערך הגדול ביותר.
+          </div>
+        );
+      })()}
       {error && <div className="rounded-lg bg-red-50 text-red-600 text-sm p-3 mb-3">{error}</div>}
       {notice && <div className="rounded-lg bg-amber-50 text-amber-700 text-sm p-3 mb-3">{notice}</div>}
       {(() => {
@@ -410,8 +420,9 @@ function Integrations({ google }) {
                       <div className="flex items-center gap-3 min-w-0">
                         <span className="text-xl shrink-0" aria-hidden>{ICONS[it.slug] || '🔌'}</span>
                         <div className="min-w-0">
-                          <div className="text-sm font-medium text-slate-800 flex items-center gap-2">
+                          <div className="text-sm font-medium text-slate-800 flex items-center gap-2 flex-wrap">
                             {it.label}
+                            <NicheBadge level={it.recommended} />
                             {locked && (
                               <span className="badge bg-amber-100 text-amber-700 text-[10px] font-medium" title="דורש הפעלת תוסף Google בתשלום על ידי מנהל המערכת">
                                 🔒 תוסף בתשלום
@@ -442,7 +453,7 @@ function Integrations({ google }) {
                       <div className="flex items-center gap-3 min-w-0">
                         <span className="text-xl shrink-0 grayscale" aria-hidden>{ICONS[it.slug] || '🔌'}</span>
                         <div className="min-w-0">
-                          <div className="text-sm font-medium text-slate-700">{it.label}</div>
+                          <div className="text-sm font-medium text-slate-700 flex items-center gap-2 flex-wrap">{it.label}<NicheBadge level={it.recommended} /></div>
                           <div className="text-xs text-slate-400 truncate">{it.desc}</div>
                         </div>
                       </div>
@@ -500,8 +511,9 @@ function WebhookConfig({ item, icon, config, onChanged }) {
         <div className="flex items-center gap-3 min-w-0">
           <span className="text-xl shrink-0" aria-hidden>{icon || '🔗'}</span>
           <div className="min-w-0">
-            <div className="text-sm font-medium text-slate-800 flex items-center gap-2">
+            <div className="text-sm font-medium text-slate-800 flex items-center gap-2 flex-wrap">
               {item.label}
+              <NicheBadge level={item.recommended} />
               {connected && <span className="badge bg-green-100 text-green-700 text-[10px] font-medium">● מחובר</span>}
             </div>
             <div className="text-xs text-slate-500 truncate">{item.desc}</div>
@@ -537,6 +549,16 @@ function WebhookConfig({ item, icon, config, onChanged }) {
         </div>
       )}
     </div>
+  );
+}
+
+// "Recommended for your niche" chip on an integration row.
+function NicheBadge({ level }) {
+  if (!level) return null;
+  return (
+    <span className="badge bg-brand-100 text-brand-700 text-[10px] font-medium shrink-0">
+      {level === 'must' ? '⭐ מומלץ לתחום שלך' : 'מומלץ'}
+    </span>
   );
 }
 

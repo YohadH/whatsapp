@@ -55,6 +55,8 @@ export default function Onboarding() {
   const [code, setCode] = useState('');
   const [connectedNow, setConnectedNow] = useState(false);
 
+  const [reco, setReco] = useState(null); // niche's must-have integration (label)
+
   useEffect(() => {
     api.get('/api/settings/profile').then((r) => {
       setBizName(r.data.name || '');
@@ -62,6 +64,11 @@ export default function Onboarding() {
     }).catch(() => {});
     api.get('/api/knowledge-base').then((r) => setBizDesc(r.data?.businessDescription || '')).catch(() => {});
     api.get('/api/settings/whatsapp').then((r) => setWaState(r.data)).catch(() => setWaState({}));
+    // Per-niche recommended integration ("connect what matters").
+    api.get('/api/settings/integrations').then((r) => {
+      const must = (r.data.catalog || []).find((it) => it.recommended === 'must');
+      if (must) setReco({ label: must.label, nicheLabel: r.data.nicheLabel });
+    }).catch(() => {});
   }, []);
 
   const connected = connectedNow || Boolean(waState?.connected);
@@ -318,6 +325,16 @@ export default function Onboarding() {
                     </div>
                   </div>
                 </li>
+                {reco && (
+                  <li className="flex items-center gap-3 bg-brand-50 rounded-xl border border-brand-200 p-4">
+                    <span className="grid place-items-center h-8 w-8 rounded-full bg-brand-100 text-brand-700 font-bold">⭐</span>
+                    <div className="min-w-0">
+                      <div className="font-medium text-ink-900">מומלץ לתחום שלכם{reco.nicheLabel ? ` (${reco.nicheLabel})` : ''}: חברו את {reco.label}</div>
+                      <div className="text-xs text-slate-500">זה מה שייתן לסוכן את הערך הגדול ביותר בתחום שלכם — אפשר לחבר עכשיו בהגדרות.</div>
+                    </div>
+                    <button className="btn-ghost text-sm shrink-0 ms-auto" onClick={() => navigate('/settings')}>לחיבור ←</button>
+                  </li>
+                )}
                 <li className="flex items-center gap-3 bg-white rounded-xl border border-slate-200 p-4">
                   <span className="grid place-items-center h-8 w-8 rounded-full bg-brand-50 text-brand-600 font-bold">→</span>
                   <div>

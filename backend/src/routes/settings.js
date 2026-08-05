@@ -13,6 +13,7 @@ import {
   splitPhone,
 } from '../services/numberRegistration.js';
 import { WEBHOOK_SLUGS, isSafeWebhookUrl, deliverToUrl } from '../services/outboundWebhook.js';
+import { getNichePack } from '../data/nichePacks.js';
 
 // Tenant-facing account settings, scoped to the caller's OWN tenant (req.tenantId,
 // set by withTenant). This lets a tenant admin self-connect their WhatsApp number
@@ -322,12 +323,26 @@ function isIntegrationReady(slug) {
 function isConfigurable(slug) {
   return WEBHOOK_SLUGS.includes(slug);
 }
-// Catalog annotated with per-item readiness (+ a Hebrew status hint for not-ready).
-function catalogWithReadiness() {
-  return INTEGRATION_CATALOG.map((it) => {
+// Catalog annotated with per-item readiness + per-NICHE recommendation, filtered to
+// the tenant's vertical. Each item gets { ready, configurable, statusNote,
+// recommended: 'must'|'recommended'|null }; the niche's `hide` slugs are dropped
+// (e.g. a support account never sees Calendar), and recommended items sort to the top.
+function catalogForTenant(tenant) {
+  const pack = getNichePack(tenant?.niche);
+  const rec = {};
+  const hide = new Set();
+  if (pack) {
+    for (const s of pack.integrations?.must || []) rec[s] = 'must';
+    for (const s of pack.integrations?.recommended || []) rec[s] = rec[s] || 'recommended';
+    for (const s of pack.integrations?.hide || []) hide.add(s);
+  }
+  const items = INTEGRATION_CATALOG.filter((it) => !hide.has(it.slug)).map((it) => {
     const ready = isIntegrationReady(it.slug);
-    return { ...it, ready, configurable: isConfigurable(it.slug), statusNote: ready ? null : 'בקרוב' };
+    return { ...it, ready, configurable: isConfigurable(it.slug), statusNote: ready ? null : 'בקרוב', recommended: rec[it.slug] || null };
   });
+  const rank = (r) => (r === 'must' ? 0 : r === 'recommended' ? 1 : 2);
+  items.sort((a, b) => rank(a.recommended) - rank(b.recommended));
+  return { catalog: items, nicheLabel: pack ? pack.label : null };
 }
 
 // Read the tenant's integrationConfig JSON safely, returning per-slug public config
@@ -356,8 +371,10 @@ function readIntegrations(tenant) {
 router.get(
   '/integrations',
   asyncHandler(async (req, res) => {
+    const { catalog, nicheLabel } = catalogForTenant(req.tenant);
     res.json({
-      catalog: catalogWithReadiness(),
+      catalog,
+      nicheLabel,
       enabled: readIntegrations(req.tenant),
       config: readIntegrationConfig(req.tenant),
     });
