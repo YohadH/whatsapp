@@ -3,6 +3,7 @@ import config from '../config/index.js';
 import { generateAgentResponse, ruleBasedResponse } from './aiAgent.js';
 import { aiConfigured } from './llm.js';
 import { sendWhatsAppMessage, sendWhatsAppAudio, sendWhatsAppImage } from './whatsapp.js';
+import { tenantMessengerCreds, sendMessengerMessage } from './metaMessaging.js';
 import { tenantWhatsAppCreds } from '../lib/tenantContext.js';
 import { hasCredits, markLowCreditNudge, spendOneCredit } from '../lib/credits.js';
 import { trackEvent, EVENTS } from './analytics.js';
@@ -132,15 +133,25 @@ function awayAlreadySentRecently(history, awayMessage) {
  * of a specific tenant. `tenant` is the full Tenant row (its WhatsApp creds are
  * used to reply). Returns { conversation, agentResponse, replySent }.
  */
-export async function handleIncomingMessage({ tenant, phone: rawPhone, text, name, rawPayload, waMessageId, forceFlowId, simulated }) {
+export async function handleIncomingMessage({ tenant, channel = 'whatsapp', phone: rawPhone, externalId: rawExternalId = null, text, name, rawPayload, waMessageId, forceFlowId, simulated }) {
   if (!tenant?.id) throw new Error('handleIncomingMessage requires a tenant');
   const tenantId = tenant.id;
   const creds = tenantWhatsAppCreds(tenant);
 
-  // Canonicalize the number up front so the SAME contact in different formats
-  // (e.g. "0545532316" and "972545532316") resolves to ONE customer/thread —
-  // otherwise each format becomes its own Customer row and shows as a duplicate.
-  const phone = normalizePhone(rawPhone) || rawPhone;
+  // Channel identity. WhatsApp is phone-based; Instagram/Messenger use a scoped id
+  // (PSID/IGSID) and have no phone. `phone` is set ONLY for WhatsApp (and canonicalized
+  // so "0545…"/"972545…" collapse to one contact). `externalId` is the channel-scoped
+  // id we key the Customer on; `address` is what we store on the conversation + send to.
+  const isWa = channel === 'whatsapp';
+  const phone = isWa ? (normalizePhone(rawPhone) || rawPhone) : null;
+  const externalId = isWa ? phone : (rawExternalId || rawPhone);
+  const address = isWa ? phone : externalId;
+  const msgrCreds = isWa ? null : tenantMessengerCreds(tenant);
+
+  // Channel-aware text delivery: WhatsApp via the Cloud API, Instagram/Messenger via the
+  // Page Send API (24h window). Throws if the channel isn't connected — callers catch.
+  const deliverText = (t) =>
+    isWa ? sendWhatsAppMessage(creds, phone, t) : sendMessengerMessage(msgrCreds, address, t);
 
   // 0) Idempotency: Meta delivers webhooks at-least-once. If we've already
   // stored this inbound message id for this tenant, skip re-processing.
@@ -162,12 +173,18 @@ export async function handleIncomingMessage({ tenant, phone: rawPhone, text, nam
     if (seen) return { conversation: null, agentResponse: null, replySent: false, duplicate: true };
   }
 
-  // 1) Customer
-  const customer = await prisma.customer.upsert({
-    where: { tenantId_phone: { tenantId, phone } },
-    update: name ? { name } : {},
-    create: { tenantId, phone, name: name || null },
-  });
+  // 1) Customer — keyed by phone on WhatsApp, by (channel, externalId) elsewhere.
+  const customer = isWa
+    ? await prisma.customer.upsert({
+        where: { tenantId_phone: { tenantId, phone } },
+        update: name ? { name } : {},
+        create: { tenantId, channel, phone, externalId, name: name || null },
+      })
+    : await prisma.customer.upsert({
+        where: { tenantId_channel_externalId: { tenantId, channel, externalId } },
+        update: name ? { name } : {},
+        create: { tenantId, channel, externalId, phone: null, name: name || null },
+      });
 
   // 2) ONE conversation per customer — a single WhatsApp-style thread per phone.
   // Reuse the customer's existing conversation (reopening/resetting it as needed);
@@ -198,6 +215,7 @@ export async function handleIncomingMessage({ tenant, phone: rawPhone, text, nam
           data: {
             tenantId,
             conversationId: conversation.id,
+            channel,
             senderType: 'customer',
             messageText: text,
             waMessageId: waMessageId || null,
@@ -266,7 +284,7 @@ export async function handleIncomingMessage({ tenant, phone: rawPhone, text, nam
     // win), but the loser's empty row is cleaned up in that gate's P2002 catch below.
     conversation = await prisma.conversation.create({
       // isTest marks simulator threads so they stay out of the real inbox.
-      data: { tenantId, customerId: customer.id, whatsappPhone: phone, status: 'active', isTest: !!simulated },
+      data: { tenantId, customerId: customer.id, channel, whatsappPhone: address, status: 'active', isTest: !!simulated },
       select: CONVERSATION_ENGINE_SELECT, // drift-safe (AP-T71): don't RETURNING window cols
     });
     isNew = true;
@@ -296,6 +314,7 @@ export async function handleIncomingMessage({ tenant, phone: rawPhone, text, nam
       data: {
         tenantId,
         conversationId: conversation.id,
+        channel,
         senderType: 'customer',
         messageText: text,
         waMessageId: waMessageId || null,
@@ -390,7 +409,7 @@ export async function handleIncomingMessage({ tenant, phone: rawPhone, text, nam
     const away = kb.businessHours.awayMessage;
     if (!awayAlreadySentRecently(history, away)) {
       try {
-        await sendWhatsAppMessage(creds, phone, away);
+        await deliverText(away);
       } catch (err) {
         console.error('[engine] out-of-hours reply failed:', err.message);
       }
@@ -777,6 +796,7 @@ export async function handleIncomingMessage({ tenant, phone: rawPhone, text, nam
       data: {
         tenantId,
         conversationId: conversation.id,
+        channel,
         senderType: 'agent',
         messageText: replyText,
         intent: agentResponse.intent,
@@ -798,18 +818,23 @@ export async function handleIncomingMessage({ tenant, phone: rawPhone, text, nam
       .catch(() => {});
     replySent = true;
     try {
-      if (imageUrl) {
-        await sendWhatsAppImage(creds, phone, imageUrl, hasReply ? replyText : undefined);
+      if (isWa) {
+        if (imageUrl) {
+          await sendWhatsAppImage(creds, phone, imageUrl, hasReply ? replyText : undefined);
+        } else {
+          await sendWhatsAppMessage(creds, phone, replyText);
+        }
+        if (voiceUrl) {
+          if (imageUrl) await sleep(MEDIA_ORDER_DELAY_MS); // let the image land first
+          await sendWhatsAppAudio(creds, phone, voiceUrl);
+        }
       } else {
-        await sendWhatsAppMessage(creds, phone, replyText);
-      }
-      if (voiceUrl) {
-        if (imageUrl) await sleep(MEDIA_ORDER_DELAY_MS); // let the image land first
-        await sendWhatsAppAudio(creds, phone, voiceUrl);
+        // Instagram / Messenger: text reply within the 24h window (media = later phase).
+        await deliverText(replyText);
       }
     } catch (err) {
       replySent = false;
-      console.error('[engine] failed to send WhatsApp reply:', err.message);
+      console.error(`[engine] failed to send ${channel} reply:`, err.message);
     }
   }
 
