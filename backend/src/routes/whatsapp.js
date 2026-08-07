@@ -7,6 +7,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { withTenant, TENANT_SELECT } from '../middleware/tenant.js';
 import { parseIncomingMessage, parseStatusEvents } from '../services/whatsapp.js';
 import { handleIncomingMessage } from '../services/conversationEngine.js';
+import { parseMetaMessagingWebhook } from '../services/metaMessaging.js';
 import { handleOptOut } from '../services/optOut.js';
 import { recordMetaCostFromStatuses } from '../services/metaCost.js';
 import { isOwnerPhone, processReceiptImage } from '../services/receipts.js';
@@ -47,6 +48,37 @@ function verifySignature(req) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
+// Instagram Direct + Facebook Messenger inbound. Routed to a tenant by the Page id
+// (Messenger) or IG business id (Instagram) stored in tenant.integrations.meta, then run
+// through the SAME agent pipeline as WhatsApp — only the channel + identity differ.
+async function handleMetaMessagingWebhook(body) {
+  const events = parseMetaMessagingWebhook(body);
+  for (const ev of events) {
+    const pathKey = ev.channel === 'instagram' ? 'igAccountId' : 'pageId';
+    const tenant = await prisma.tenant.findFirst({
+      where: { integrations: { path: ['meta', pathKey], equals: ev.recipientId } },
+      select: TENANT_SELECT,
+    });
+    if (!tenant) {
+      console.warn(`[webhook] no tenant for ${ev.channel} id ${ev.recipientId} — dropping`);
+      continue;
+    }
+    if (tenant.status === 'suspended') continue;
+    try {
+      await handleIncomingMessage({
+        tenant,
+        channel: ev.channel,
+        externalId: ev.externalId,
+        text: ev.text,
+        waMessageId: ev.messageId, // Meta message id → reused for inbound idempotency
+        rawPayload: ev,
+      });
+    } catch (err) {
+      console.error(`[webhook] ${ev.channel} handleIncomingMessage error:`, err.message);
+    }
+  }
+}
+
 // Inbound messages from WhatsApp Cloud API. Routed to a tenant by the Meta
 // phone_number_id in the payload metadata.
 router.post(
@@ -65,6 +97,19 @@ router.post(
     // recordMetaCost* never throws and never touches the credit-charging logic.
     const statusParse = parseStatusEvents(req.body);
     res.sendStatus(200); // acknowledge fast; process inline (small scale)
+
+    // ── Instagram / Messenger ──────────────────────────────────────────────────
+    // These Page-based channels arrive on the SAME webhook with object 'instagram' |
+    // 'page' and a different shape (entry[].messaging[]). Handle + return before the
+    // WhatsApp-format parsing below (which assumes changes[].value.messages).
+    if (req.body?.object === 'instagram' || req.body?.object === 'page') {
+      try {
+        await handleMetaMessagingWebhook(req.body);
+      } catch (err) {
+        console.error('[webhook] messenger/instagram processing error:', err.message);
+      }
+      return;
+    }
 
     if (statusParse && statusParse.events?.length && statusParse.phoneNumberId) {
       try {
