@@ -133,6 +133,51 @@ router.put(
   })
 );
 
+// ── Facebook Messenger + Instagram Direct connection ─────────────────────────
+// Stored (encrypted) under tenant.integrations.meta = { pageId, igAccountId?, pageTokenEnc }.
+// Inbound routes to the tenant by pageId (Messenger) / igAccountId (Instagram); outbound
+// uses the Page token (services/metaMessaging.js). Paste-token connect for now; Embedded
+// Signup can populate the same fields later.
+const readMeta = (t) => (t?.integrations && typeof t.integrations === 'object' ? t.integrations.meta : null) || null;
+
+router.get(
+  '/meta',
+  asyncHandler(async (req, res) => {
+    const t = await prisma.tenant.findUnique({ where: { id: req.tenantId }, select: { integrations: true } });
+    const meta = readMeta(t);
+    res.json({ connected: !!(meta?.pageId && meta?.pageTokenEnc), pageId: meta?.pageId || '', igAccountId: meta?.igAccountId || '' });
+  })
+);
+
+router.put(
+  '/meta',
+  asyncHandler(async (req, res) => {
+    const pageId = String(req.body?.pageId || '').trim();
+    const igAccountId = String(req.body?.igAccountId || '').trim() || null;
+    const pageToken = typeof req.body?.pageToken === 'string' ? req.body.pageToken.trim() : '';
+    if (!pageId) return res.status(400).json({ error: 'נדרש Page ID' });
+    const t = await prisma.tenant.findUnique({ where: { id: req.tenantId }, select: { integrations: true } });
+    const integrations = { ...(t?.integrations && typeof t.integrations === 'object' ? t.integrations : {}) };
+    const prev = integrations.meta || {};
+    const pageTokenEnc = pageToken ? encryptSecret(pageToken) : prev.pageTokenEnc;
+    if (!pageTokenEnc) return res.status(400).json({ error: 'נדרש Page Access Token' });
+    integrations.meta = { pageId, igAccountId, pageTokenEnc };
+    await prisma.tenant.update({ where: { id: req.tenantId }, data: { integrations } });
+    res.json({ connected: true, pageId, igAccountId });
+  })
+);
+
+router.delete(
+  '/meta',
+  asyncHandler(async (req, res) => {
+    const t = await prisma.tenant.findUnique({ where: { id: req.tenantId }, select: { integrations: true } });
+    const integrations = { ...(t?.integrations && typeof t.integrations === 'object' ? t.integrations : {}) };
+    delete integrations.meta;
+    await prisma.tenant.update({ where: { id: req.tenantId }, data: { integrations } });
+    res.json({ connected: false });
+  })
+);
+
 router.put(
   '/ai',
   asyncHandler(async (req, res) => {
