@@ -412,7 +412,13 @@ model Customer {
   id        String   @id @default(cuid())
   tenantId  String
   name      String?
-  phone     String
+  // ── Channel identity (MIGRATION 21_channels) ──
+  // channel: which surface this contact reached us on. externalId is the channel-scoped
+  // id — the phone for WhatsApp, or the PSID/IGSID for Messenger/Instagram (who have no
+  // phone). phone is kept for WhatsApp (its identity + broadcasts) and is NULL off-WA.
+  channel    String  @default("whatsapp") // whatsapp | instagram | messenger
+  phone      String? // normalized digits-only intl; WhatsApp identity, NULL for IG/Messenger
+  externalId String? // = phone (WhatsApp) or PSID/IGSID (Messenger/Instagram)
   email     String?
   tags      Json     @default("[]")
   createdAt DateTime @default(now())
@@ -425,6 +431,8 @@ model Customer {
 
   // Same phone can belong to different tenants; unique only within a tenant.
   @@unique([tenantId, phone])
+  // The cross-channel identity: one contact per (tenant, channel, external id).
+  @@unique([tenantId, channel, externalId])
   @@index([tenantId])
 }
 
@@ -432,7 +440,8 @@ model Conversation {
   id                String   @id @default(cuid())
   tenantId          String
   customerId        String
-  whatsappPhone     String
+  channel           String   @default("whatsapp") // whatsapp | instagram | messenger (MIGRATION 21_channels)
+  whatsappPhone     String   // the customer's channel address (phone for WA, PSID/IGSID otherwise)
   status            String   @default("active") // active | completed | abandoned | needs_human
   intent            String?
   currentFlowId     String?
@@ -476,6 +485,7 @@ model Message {
   id             String   @id @default(cuid())
   tenantId       String
   conversationId String
+  channel        String @default("whatsapp") // whatsapp | instagram | messenger (MIGRATION 21_channels)
   senderType     String // customer | agent | human
   messageText    String
   intent         String?
