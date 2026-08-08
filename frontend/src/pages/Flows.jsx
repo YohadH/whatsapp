@@ -117,6 +117,11 @@ export default function Flows() {
                     <span className={`badge ${flow.isActive ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'}`}>
                       {flow.isActive ? 'פעיל' : 'כבוי'}
                     </span>
+                    {Array.isArray(flow.channels) && flow.channels.length > 0 && (
+                      <span className="badge bg-slate-100 text-slate-600" title="הערוצים שבהם התהליך פועל">
+                        {flow.channels.map((c) => ({ whatsapp: '🟢', instagram: '📸', messenger: '💬' }[c] || c)).join(' ')}
+                      </span>
+                    )}
                   </h3>
                   <p className="text-sm text-gray-500 mt-0.5">{flow.description || '—'}</p>
                 </div>
@@ -302,6 +307,7 @@ function FlowEditor({ initial, links, onClose, onSaved }) {
     linkId: initial.linkId || '',
     isActive: initial.isActive ?? true,
     isDefault: initial.isDefault ?? false,
+    channels: Array.isArray(initial.channels) ? initial.channels : [], // [] = all channels
   });
   const [questions, setQuestions] = useState(
     (initial.questions || []).map((q) => ({ ...q, options: q.options || [], optionsText: (q.options || []).join(', ') }))
@@ -366,6 +372,7 @@ function FlowEditor({ initial, links, onClose, onSaved }) {
       linkId: form.linkId || null,
       isActive: form.isActive,
       isDefault: form.isDefault,
+      channels: form.channels, // [] = every channel
     };
     try {
       let flowId = initial.id;
@@ -424,6 +431,25 @@ function FlowEditor({ initial, links, onClose, onSaved }) {
             מילות הפעלה (מופרדות בפסיק){form.isDefault && <span className="text-gray-400 font-normal"> — לא חובה כשהתהליך מתחיל אוטומטית</span>}
           </label>
           <input className="input" value={form.triggerWords} onChange={(e) => set('triggerWords', e.target.value)} placeholder="פגישה, לקבוע, תור" />
+        </div>
+        <div>
+          <label className="label">ערוצים {form.channels.length === 0 && <span className="text-gray-400 font-normal">— כל הערוצים</span>}</label>
+          <div className="flex flex-wrap gap-2">
+            {[{ v: 'whatsapp', l: '🟢 וואטסאפ' }, { v: 'instagram', l: '📸 אינסטגרם' }, { v: 'messenger', l: '💬 פייסבוק' }].map((c) => {
+              const on = form.channels.includes(c.v);
+              return (
+                <button
+                  type="button"
+                  key={c.v}
+                  onClick={() => set('channels', on ? form.channels.filter((x) => x !== c.v) : [...form.channels, c.v])}
+                  className={`text-sm rounded-full px-3 py-1.5 border transition ${on ? 'border-brand-500 bg-brand-50 text-brand-700 font-medium' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                >
+                  {c.l}
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-xs text-gray-400 mt-1">בלי בחירה — התהליך פועל בכל הערוצים. בחרו ערוץ כדי שהאוטומציה תרוץ רק בו (למשל אינסטגרם/פייסבוק).</p>
         </div>
         <div>
           <label className="flex items-center gap-2 text-sm mb-1">

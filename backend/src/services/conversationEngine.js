@@ -450,8 +450,10 @@ export async function handleIncomingMessage({ tenant, channel = 'whatsapp', phon
       suggestedFlow = { id: forced.id, name: forced.name };
     } else {
       const lc = text.toLowerCase();
-      const matched = flows.find((fl) => fl.triggerWords?.some((w) => w && lc.includes(String(w).toLowerCase())));
-      const fallback = matched || flows.find((fl) => fl.isDefault);
+      // Only match flows scoped to THIS channel (channels null/empty = every channel).
+      const applies = (fl) => !Array.isArray(fl.channels) || fl.channels.length === 0 || fl.channels.includes(channel);
+      const matched = flows.find((fl) => applies(fl) && fl.triggerWords?.some((w) => w && lc.includes(String(w).toLowerCase())));
+      const fallback = matched || flows.find((fl) => applies(fl) && fl.isDefault);
       if (fallback) suggestedFlow = { id: fallback.id, name: fallback.name };
     }
   }
@@ -854,6 +856,7 @@ async function loadActiveFlows(tenantId) {
     name: f.name,
     description: f.description,
     triggerWords: f.triggerWords,
+    channels: f.channels, // null/empty = all channels; else ['whatsapp'|'instagram'|'messenger']
     isDefault: f.isDefault,
     finalMessage: f.finalMessage,
     sendFinalMessage: f.sendFinalMessage,

@@ -24,7 +24,7 @@ router.get(
 router.post(
   '/flows',
   asyncHandler(async (req, res) => {
-    const { name, description, triggerWords, finalMessage, sendFinalMessage, linkId, isActive, isDefault, questions } = req.body || {};
+    const { name, description, triggerWords, finalMessage, sendFinalMessage, linkId, isActive, isDefault, questions, channels } = req.body || {};
     if (!name) return res.status(400).json({ error: 'name is required' });
     // Tenant-ownership guard: a flow may only reference a Link owned by the same tenant,
     // else the outbound message would leak another tenant's URL and skew their analytics.
@@ -38,6 +38,7 @@ router.post(
         name,
         description: description || null,
         triggerWords: Array.isArray(triggerWords) ? triggerWords : [],
+        channels: Array.isArray(channels) && channels.length ? channels : null, // null = all channels
         finalMessage: finalMessage || null,
         sendFinalMessage: sendFinalMessage ?? true,
         linkId: linkId || null,
@@ -76,7 +77,7 @@ router.get(
 router.put(
   '/flows/:id',
   asyncHandler(async (req, res) => {
-    const { name, description, triggerWords, finalMessage, sendFinalMessage, linkId, isActive, isDefault } = req.body || {};
+    const { name, description, triggerWords, finalMessage, sendFinalMessage, linkId, isActive, isDefault, channels } = req.body || {};
     const owned = await prisma.flow.findFirst({ where: { id: req.params.id, tenantId: req.tenantId }, select: { id: true } });
     if (!owned) return res.status(404).json({ error: 'Flow not found' });
     // Tenant-ownership guard on the referenced Link (only when a non-null linkId is being set).
@@ -88,6 +89,7 @@ router.put(
     if (name !== undefined) data.name = name;
     if (description !== undefined) data.description = description;
     if (triggerWords !== undefined) data.triggerWords = Array.isArray(triggerWords) ? triggerWords : [];
+    if (channels !== undefined) data.channels = Array.isArray(channels) && channels.length ? channels : null;
     if (finalMessage !== undefined) data.finalMessage = finalMessage;
     if (sendFinalMessage !== undefined) data.sendFinalMessage = sendFinalMessage;
     if (linkId !== undefined) data.linkId = linkId || null;

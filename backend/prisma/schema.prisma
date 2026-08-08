@@ -511,6 +511,9 @@ model Flow {
   name             String
   description      String?
   triggerWords     Json     @default("[]")
+  // Which channels this automation runs on (MIGRATION 22_flow_channels). null/empty =
+  // every channel; otherwise a subset of ['whatsapp','instagram','messenger'].
+  channels         Json?
   finalMessage     String?
   sendFinalMessage Boolean  @default(true) // when false, no closing message is sent at flow end
   linkId           String?
