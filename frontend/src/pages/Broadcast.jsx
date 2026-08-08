@@ -389,7 +389,7 @@ export default function Broadcast() {
     <div>
       <PageHeader
         title="דיוור"
-        subtitle="העלאת רשימת מספרים ושליחת הודעה לכולם"
+        subtitle="וואטסאפ בלבד — העלאת רשימת מספרים ושליחת הודעה לכולם (אינסטגרם/מסנג׳ר אינם מאפשרים שליחה יזומה)"
         actions={<button type="button" className="btn-primary" onClick={openCreate}>+ תבנית חדשה</button>}
       />
 

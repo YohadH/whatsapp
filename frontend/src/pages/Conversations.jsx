@@ -46,6 +46,14 @@ function initials(name, phone) {
 function hhmm(d) {
   return new Date(d).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
 }
+// Channel marker for the multi-channel inbox. WhatsApp (the default) shows nothing so the
+// list stays clean; Instagram/Messenger get a small emoji so they stand out at a glance.
+const CHANNEL_MARK = { instagram: { emoji: '📸', label: 'Instagram' }, messenger: { emoji: '💬', label: 'Messenger' } };
+function ChannelMark({ channel }) {
+  const c = CHANNEL_MARK[channel];
+  if (!c) return null;
+  return <span className="shrink-0 text-[13px] leading-none" title={c.label}>{c.emoji}</span>;
+}
 function dayLabel(d) {
   const date = new Date(d);
   const today = new Date();
@@ -233,7 +241,9 @@ export default function Conversations() {
                   </span>
                   <span className="flex-1 min-w-0">
                     <span className="flex items-center justify-between gap-2">
-                      <span className="font-medium text-slate-800 truncate">{name}</span>
+                      <span className="font-medium text-slate-800 truncate flex items-center gap-1">
+                        <ChannelMark channel={c.channel} />{name}
+                      </span>
                       <span className="text-[11px] text-slate-400 shrink-0">{c.lastActivityAt ? hhmm(c.lastActivityAt) : ''}</span>
                     </span>
                     <span className="flex items-center justify-between gap-2 mt-0.5">

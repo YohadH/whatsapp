@@ -4,6 +4,7 @@ import { asyncHandler } from '../middleware/error.js';
 import { trackEvent, EVENTS } from '../services/analytics.js';
 import { notifyOwnerHandoff } from '../services/handoffNotify.js';
 import { sendWhatsAppMessage, describeInboundMessage } from '../services/whatsapp.js';
+import { tenantMessengerCreds, sendMessengerMessage } from '../services/metaMessaging.js';
 import { tenantWhatsAppCreds } from '../lib/tenantContext.js';
 import { downloadAndCache, findCached } from '../services/media.js';
 
@@ -233,9 +234,18 @@ router.post(
     let waMessageId = null;
     let simulated = false;
     try {
-      const result = await sendWhatsAppMessage(tenantWhatsAppCreds(req.tenant), conv.whatsappPhone, text);
-      simulated = Boolean(result?.simulated);
-      waMessageId = result?.messages?.[0]?.id || null;
+      if (conv.channel && conv.channel !== 'whatsapp') {
+        // Instagram / Messenger: send via the Page Send API (24h window). conv.whatsappPhone
+        // holds the PSID/IGSID for these channels.
+        const mc = tenantMessengerCreds(req.tenant);
+        if (!mc) return res.status(400).json({ error: 'הערוץ (פייסבוק/אינסטגרם) אינו מחובר' });
+        const result = await sendMessengerMessage(mc, conv.whatsappPhone, text);
+        waMessageId = result?.id || null;
+      } else {
+        const result = await sendWhatsAppMessage(tenantWhatsAppCreds(req.tenant), conv.whatsappPhone, text);
+        simulated = Boolean(result?.simulated);
+        waMessageId = result?.messages?.[0]?.id || null;
+      }
     } catch (err) {
       // 24h-window expiry (or any Meta send error) → friendly, actionable message.
       let msg = err.message || 'שליחת ההודעה נכשלה';
@@ -249,6 +259,7 @@ router.post(
       data: {
         tenantId: req.tenantId,
         conversationId: conv.id,
+        channel: conv.channel || 'whatsapp',
         senderType: 'human',
         messageText: text,
         waMessageId,
