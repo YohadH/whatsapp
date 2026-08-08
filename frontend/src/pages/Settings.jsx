@@ -103,6 +103,11 @@ function MetaConnect() {
   const [connecting, setConnecting] = useState(false);
   const [err, setErr] = useState('');
   const [showManual, setShowManual] = useState(false);
+  // Multi-page picker: when the FB account manages >1 Page, /meta/connect returns
+  // the full list and we ask the user which Page to connect (else Meta's arbitrary
+  // first Page wins silently). Holds { userToken, pages:[{id,name}] } while choosing.
+  const [picker, setPicker] = useState(null);
+  const [finalizing, setFinalizing] = useState(false);
   const [pageId, setPageId] = useState('');
   const [igAccountId, setIgAccountId] = useState('');
   const [pageToken, setPageToken] = useState('');
@@ -115,13 +120,31 @@ function MetaConnect() {
   useEffect(() => { load(); }, []);
 
   async function connect() {
-    setErr(''); setConnecting(true);
+    setErr(''); setPicker(null); setConnecting(true);
     try {
       if (!es?.appId) throw new Error('חיבור בלחיצה אחת אינו מוגדר בשרת — השתמשו בחיבור הידני');
       const userToken = await launchMetaConnect({ appId: es.appId, graphVersion: es.graphVersion });
-      await api.post('/api/settings/meta/connect', { userToken });
-      load();
+      const { data } = await api.post('/api/settings/meta/connect', { userToken });
+      // If the account manages more than one Page, let the user pick which one to
+      // connect instead of accepting Meta's arbitrary first Page. Otherwise the
+      // single Page is already connected — keep today's behavior.
+      if (data?.pages?.length > 1) {
+        setPicker({ userToken, pages: data.pages });
+      } else {
+        load();
+      }
     } catch (ex) { setErr(ex.response?.data?.error || ex.message || 'החיבור נכשל'); } finally { setConnecting(false); }
+  }
+  // Finalize the connection to a specific Page chosen from the picker: re-POST
+  // /meta/connect with the same userToken plus the chosen pageId.
+  async function choosePage(pageId) {
+    if (!picker?.userToken) return;
+    setErr(''); setFinalizing(true);
+    try {
+      await api.post('/api/settings/meta/connect', { userToken: picker.userToken, pageId });
+      setPicker(null);
+      load();
+    } catch (ex) { setErr(ex.response?.data?.error || ex.message || 'החיבור נכשל'); } finally { setFinalizing(false); }
   }
   async function saveManual(e) {
     e.preventDefault(); setErr(''); setSavingManual(true);
@@ -150,7 +173,31 @@ function MetaConnect() {
 
       {err && <div className="text-sm text-red-600 bg-red-50 rounded-lg p-2 mb-3">{err}</div>}
 
-      {cfg.connected ? (
+      {picker ? (
+        <div className="rounded-xl border border-blue-200 bg-blue-50 p-3">
+          <div className="text-sm font-medium text-slate-700 mb-1">בחרו עמוד פייסבוק לחיבור</div>
+          <p className="text-xs text-slate-500 mb-3">בחשבון שלכם יש כמה עמודים. בחרו את העמוד שהסוכן יחובר אליו (מסנג׳ר ואינסטגרם המקושר אליו).</p>
+          <ul className="space-y-2">
+            {picker.pages.map((p) => (
+              <li key={p.id}>
+                <button
+                  type="button"
+                  disabled={finalizing}
+                  onClick={() => choosePage(p.id)}
+                  className="w-full text-right rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm hover:border-brand-400 hover:bg-brand-50 transition disabled:opacity-60"
+                >
+                  <span className="font-medium text-slate-800">{p.name || 'עמוד ללא שם'}</span>
+                  <span className="text-xs text-slate-400 mr-2" dir="ltr">{p.id}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+          <button type="button" className="text-xs text-slate-400 hover:text-slate-600 mt-3" disabled={finalizing} onClick={() => setPicker(null)}>
+            ביטול
+          </button>
+          {finalizing && <div className="text-xs text-slate-400 mt-2">מחבר…</div>}
+        </div>
+      ) : cfg.connected ? (
         <div className="rounded-xl border border-green-200 bg-green-50 p-3 flex items-center justify-between gap-3">
           <div className="text-sm text-slate-700">
             <div>✅ מחובר: <b>{cfg.pageName || cfg.pageId}</b></div>
