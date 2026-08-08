@@ -156,6 +156,26 @@ router.put(
     const igAccountId = String(req.body?.igAccountId || '').trim() || null;
     const pageToken = typeof req.body?.pageToken === 'string' ? req.body.pageToken.trim() : '';
     if (!pageId) return res.status(400).json({ error: 'נדרש Page ID' });
+
+    // Cross-tenant clash guard — mirror of the WhatsApp connect guards above.
+    // Inbound Messenger/Instagram webhooks route to a tenant purely by pageId /
+    // igAccountId (routes/whatsapp.js handleMetaMessagingWebhook: findFirst on
+    // integrations.path ['meta', pageId|igAccountId]). If a DIFFERENT tenant already
+    // holds this pageId/igAccountId, allowing the save would make inbound routing
+    // ambiguous (findFirst picks one arbitrarily) — a real tenant-isolation break the
+    // instant Meta App Review lands. Refuse, exactly like the WhatsApp-number guards.
+    const clash = await prisma.tenant.findFirst({
+      where: {
+        NOT: { id: req.tenantId },
+        OR: [
+          { integrations: { path: ['meta', 'pageId'], equals: pageId } },
+          ...(igAccountId ? [{ integrations: { path: ['meta', 'igAccountId'], equals: igAccountId } }] : []),
+        ],
+      },
+      select: { id: true },
+    });
+    if (clash) return res.status(409).json({ error: 'עמוד/חשבון Instagram זה כבר מחובר לחשבון אחר' });
+
     const t = await prisma.tenant.findUnique({ where: { id: req.tenantId }, select: { integrations: true } });
     const integrations = { ...(t?.integrations && typeof t.integrations === 'object' ? t.integrations : {}) };
     const prev = integrations.meta || {};
