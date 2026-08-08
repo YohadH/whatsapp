@@ -9,10 +9,16 @@
 // npm script (runs automatically on `npm install`) invokes this installer, which
 // writes .git/hooks/pre-commit. It is idempotent and safe to run repeatedly.
 //
-// The installed pre-commit hook runs the STAGED-diff schema⇄migration parity
-// gate (backend/scripts/check-schema-migration-parity.mjs). If a commit stages a
-// change to backend/prisma/schema.prisma without a new migration directory, the
-// commit is BLOCKED — the earliest, cheapest place to stop schema/DB drift.
+// The installed pre-commit hook runs, on the STAGED diff:
+//   • schema⇄migration parity gate (backend/scripts/check-schema-migration-parity.mjs)
+//     — HARD BLOCK: a change to backend/prisma/schema.prisma without a new migration
+//     directory is refused, the earliest/cheapest place to stop schema/DB drift.
+//   • TOCTOU heuristic (backend/scripts/check-toctou-heuristic.mjs) — advisory WARN.
+//   • scope-lock gate (backend/scripts/check-scope-lock.mjs) — advisory WARN, or HARD
+//     BLOCK for a manifest area flagged hardBlock:true: a staged file touching a
+//     day-one-EXCLUDED surface (backend/scope-lock.json) with no SCOPE-UNLOCK entry in
+//     the decision-log is flagged.
+// EMERGENCY BYPASS for any of these gates:  git commit --no-verify
 //
 // Manual use:   node scripts/install-git-hooks.mjs
 // Auto (npm):   runs on `npm install` via the root `prepare` script.
@@ -50,12 +56,20 @@ const HOOK = `#!/bin/sh
 # 2) TOCTOU heuristic — WARN ONLY (advisory, does NOT block): prints file:line for
 #    any findUnique/findFirst read → field-gate → bare update/create that lacks an
 #    atomic-conditional guard or P2002 catch (AP-T72 read-then-write race shape).
-# To bypass the hard block in an emergency: git commit --no-verify
+# 3) scope-lock gate — WARN by default (advisory), or HARD BLOCK for any manifest
+#    area flagged hardBlock:true: prints file:path for a staged file that touches a
+#    day-one-EXCLUDED surface (backend/scope-lock.json) with no matching
+#    'SCOPE-UNLOCK: <area>' line in D:/AgentsTeam/decisions/decision-log.md.
+# EMERGENCY BYPASS (skips ALL of the above hooks): git commit --no-verify
 node backend/scripts/check-schema-migration-parity.mjs || exit 1
 # Advisory only — deliberately NOT gated with '|| exit 1' so the commit proceeds; a
 # human (developer/bug-reviewer) confirms each warning is an atomic-conditional or a
 # P2002-catch pattern. Any error inside the check is swallowed so it never blocks.
 node backend/scripts/check-toctou-heuristic.mjs || true
+# Scope-lock: advisory areas WARN (exit 0 → commit proceeds); a hardBlock:true area
+# exits 1 and aborts the commit. Any error inside the check is swallowed (exit 0) so a
+# broken check never blocks. Its own exit 1 is honored here so hardBlock areas bite.
+node backend/scripts/check-scope-lock.mjs || exit 1
 `;
 
 // pre-push hook body. POLICY: agents commit LOCALLY ONLY — the human reviews and

@@ -1,0 +1,44 @@
+{
+  "_comment": [
+    "Day-one-EXCLUDED scope manifest (whatsapp-agent-wa-scope-lock-gate).",
+    "Each area declares path globs (repo-root-relative, forward slashes) that were built",
+    "AHEAD of an explicit owner go-ahead. A commit that stages a file matching one of these",
+    "globs WARNS (advisory, like the TOCTOU heuristic) unless the decision-log carries a",
+    "matching `SCOPE-UNLOCK: <area>` line — which is how the owner signals the area is now",
+    "in-scope. Set `hardBlock: true` on an area to escalate that area from a warning to a",
+    "HARD BLOCK (the pre-commit hook aborts the commit) until it is unlocked.",
+    "",
+    "Emergency bypass for ANY gate in this repo:  git commit --no-verify",
+    "",
+    "Seeded from the Instagram/Messenger channel work landed in commits",
+    "dfde910 d338561 6316157 518ac21 b1b6cd4 07c5c23 cbbedd3 (channel adapter + connect +",
+    "inbound webhook + channel-aware engine). These shipped as Phase-0 groundwork; this",
+    "manifest keeps further build on those surfaces gated on an explicit owner SCOPE-UNLOCK."
+  ],
+  "areas": [
+    {
+      "area": "ig-messenger",
+      "description": "Instagram + Facebook Messenger channel adapter, connect flow, and inbound webhook — the non-WhatsApp channels built ahead of an explicit owner go-ahead.",
+      "hardBlock": false,
+      "globs": [
+        "backend/src/services/metaMessaging.js",
+        "backend/src/routes/settings.js",
+        "backend/src/routes/whatsapp.js",
+        "frontend/src/pages/Settings.jsx"
+      ]
+    },
+    {
+      "area": "channel-aware-engine",
+      "description": "Channel-aware conversation engine + per-channel flow scoping + multi-channel inbox — engine/route surfaces that became channel-aware for IG/Messenger.",
+      "hardBlock": false,
+      "globs": [
+        "backend/src/services/conversationEngine.js",
+        "backend/src/routes/conversations.js",
+        "backend/src/routes/flows.js",
+        "frontend/src/pages/Flows.jsx",
+        "frontend/src/pages/Conversations.jsx",
+        "frontend/src/pages/Broadcast.jsx"
+      ]
+    }
+  ]
+}
