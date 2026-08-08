@@ -184,13 +184,22 @@ function globToRegExp(glob) {
 }
 
 // Does a decision-log carry a `SCOPE-UNLOCK: <area>` marker for this area? Matches a
-// line CONTAINING `SCOPE-UNLOCK:` followed by the area token (case-insensitive on the
-// keyword; the area token is matched exactly, allowing surrounding whitespace).
+// line CONTAINING `SCOPE-UNLOCK:` followed by the area name as a DISCRETE token
+// (case-insensitive on the keyword; the area token is matched exactly, allowing
+// surrounding whitespace).
+//
+// The area token must NOT be immediately followed by a word char, `-`, `.`, or `_` —
+// otherwise a narrower/differently-scoped note like `SCOPE-UNLOCK: ig-messenger-DOCS-ONLY`
+// or `SCOPE-UNLOCK: ig-messenger.disabled` would accidentally unlock the WHOLE plain
+// `ig-messenger` area. A bare `\b` boundary is insufficient because `-` and `.` are
+// non-word chars, so `\b` fires right after the token regardless of a `-`/`.` continuation.
+// A `(?![\w.-])` negative lookahead requires a genuine end-of-token (whitespace, EOL,
+// `—`, `:`, `,`, `)`, …) while rejecting identifier-continuation suffixes.
 function isAreaUnlocked(decisionLogText, area) {
   if (!decisionLogText) return false;
   // e.g. "- [2026-08-08] SCOPE-UNLOCK: ig-messenger — owner approved …"
   const re = new RegExp(
-    'SCOPE-UNLOCK:\\s*' + area.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b',
+    'SCOPE-UNLOCK:\\s*' + area.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\w.-])',
     'i'
   );
   return re.test(decisionLogText);

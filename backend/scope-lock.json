@@ -24,7 +24,9 @@
         "backend/src/services/metaMessaging.js",
         "backend/src/routes/settings.js",
         "backend/src/routes/whatsapp.js",
-        "frontend/src/pages/Settings.jsx"
+        "frontend/src/pages/Settings.jsx",
+        "backend/prisma/schema.prisma",
+        "backend/prisma/migrations/21_channels/**"
       ]
     },
     {
@@ -37,7 +39,9 @@
         "backend/src/routes/flows.js",
         "frontend/src/pages/Flows.jsx",
         "frontend/src/pages/Conversations.jsx",
-        "frontend/src/pages/Broadcast.jsx"
+        "frontend/src/pages/Broadcast.jsx",
+        "backend/prisma/schema.prisma",
+        "backend/prisma/migrations/22_flow_channels/**"
       ]
     }
   ]
