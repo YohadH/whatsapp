@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import api from '../api/client.js';
 import { PageHeader } from '../components/Layout.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
-import { launchEmbeddedSignup } from '../lib/fbEmbeddedSignup.js';
+import { launchEmbeddedSignup, launchMetaConnect } from '../lib/fbEmbeddedSignup.js';
 import { NICHES } from '../data/niches.js';
 
 // Settings sections — surfaced as a side nav (desktop) / scrollable tab bar
@@ -94,28 +94,41 @@ export default function Settings() {
   );
 }
 
-// Connect Facebook Messenger + Instagram Direct. Paste-a-Page-token for now; the agent
-// then auto-replies to DMs on those channels through the same AI brain as WhatsApp.
+// Connect Facebook Messenger + Instagram Direct in ONE click (Facebook Login). One Page
+// connection enables both channels — the agent then auto-replies to DMs through the same
+// AI brain as WhatsApp. A manual paste-token fallback is kept for advanced/dev use.
 function MetaConnect() {
   const [cfg, setCfg] = useState(null);
+  const [es, setEs] = useState(null); // embeddedSignup config: { appId, graphVersion }
+  const [connecting, setConnecting] = useState(false);
+  const [err, setErr] = useState('');
+  const [showManual, setShowManual] = useState(false);
   const [pageId, setPageId] = useState('');
   const [igAccountId, setIgAccountId] = useState('');
   const [pageToken, setPageToken] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [err, setErr] = useState('');
+  const [savingManual, setSavingManual] = useState(false);
 
-  const load = () => api.get('/api/settings/meta').then((r) => {
-    setCfg(r.data); setPageId(r.data.pageId || ''); setIgAccountId(r.data.igAccountId || '');
-  }).catch(() => setCfg({ connected: false }));
+  const load = () => Promise.all([
+    api.get('/api/settings/meta').then((r) => r.data).catch(() => ({ connected: false })),
+    api.get('/api/settings/whatsapp').then((r) => r.data.embeddedSignup || {}).catch(() => ({})),
+  ]).then(([m, e]) => { setCfg(m); setEs(e); });
   useEffect(() => { load(); }, []);
 
-  async function save(e) {
-    e.preventDefault(); setErr(''); setSaved(false); setSaving(true);
+  async function connect() {
+    setErr(''); setConnecting(true);
+    try {
+      if (!es?.appId) throw new Error('חיבור בלחיצה אחת אינו מוגדר בשרת — השתמשו בחיבור הידני');
+      const userToken = await launchMetaConnect({ appId: es.appId, graphVersion: es.graphVersion });
+      await api.post('/api/settings/meta/connect', { userToken });
+      load();
+    } catch (ex) { setErr(ex.response?.data?.error || ex.message || 'החיבור נכשל'); } finally { setConnecting(false); }
+  }
+  async function saveManual(e) {
+    e.preventDefault(); setErr(''); setSavingManual(true);
     try {
       await api.put('/api/settings/meta', { pageId: pageId.trim(), igAccountId: igAccountId.trim() || undefined, pageToken: pageToken.trim() || undefined });
-      setPageToken(''); setSaved(true); setTimeout(() => setSaved(false), 2500); load();
-    } catch (ex) { setErr(ex.response?.data?.error || 'החיבור נכשל'); } finally { setSaving(false); }
+      setPageToken(''); setShowManual(false); load();
+    } catch (ex) { setErr(ex.response?.data?.error || 'החיבור נכשל'); } finally { setSavingManual(false); }
   }
   async function disconnect() {
     // eslint-disable-next-line no-alert
@@ -131,23 +144,44 @@ function MetaConnect() {
         <span className={`badge ${cfg.connected ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{cfg.connected ? 'מחובר' : 'לא מחובר'}</span>
       </div>
       <p className="text-xs text-slate-400 mb-3">
-        חברו עמוד פייסבוק (ומשם גם אינסטגרם) כדי שהסוכן יענה אוטומטית להודעות ישירות — דרך אותו מוח AI.
-        מענה אוטומטי מותר רק בחלון 24 שעות מרגע פניית הלקוח (מדיניות Meta), וללא שליחה יזומה/דיוור.
+        חברו עמוד פייסבוק בלחיצה אחת — והסוכן יענה אוטומטית להודעות ישירות במסנג׳ר ובאינסטגרם דרך אותו מוח AI.
+        חיבור אחד מפעיל את שני הערוצים. מענה אוטומטי מותר רק בחלון 24 שעות מפניית הלקוח (מדיניות Meta).
       </p>
-      <form onSubmit={save} className="space-y-3 max-w-2xl">
-        <div className="grid sm:grid-cols-2 gap-3">
-          <div><label className="label">Page ID</label><input className="input" dir="ltr" value={pageId} onChange={(e) => setPageId(e.target.value)} placeholder="1234567890" /></div>
-          <div><label className="label">Instagram Account ID <span className="text-slate-400 text-xs">(אופציונלי)</span></label><input className="input" dir="ltr" value={igAccountId} onChange={(e) => setIgAccountId(e.target.value)} placeholder="17841400000000000" /></div>
+
+      {err && <div className="text-sm text-red-600 bg-red-50 rounded-lg p-2 mb-3">{err}</div>}
+
+      {cfg.connected ? (
+        <div className="rounded-xl border border-green-200 bg-green-50 p-3 flex items-center justify-between gap-3">
+          <div className="text-sm text-slate-700">
+            <div>✅ מחובר: <b>{cfg.pageName || cfg.pageId}</b></div>
+            {cfg.igUsername && <div className="text-xs text-slate-500 mt-0.5">📸 אינסטגרם: @{cfg.igUsername}</div>}
+          </div>
+          <button className="btn-ghost text-sm" onClick={disconnect}>ניתוק</button>
         </div>
-        <div><label className="label">Page Access Token {cfg.connected && <span className="text-green-600 text-xs">(שמור ✓)</span>}</label>
-          <input className="input" dir="ltr" type="password" value={pageToken} onChange={(e) => setPageToken(e.target.value)} placeholder={cfg.connected ? '•••••••• (מלאו רק כדי להחליף)' : 'EAAG…'} /></div>
-        {err && <div className="text-sm text-red-600 bg-red-50 rounded-lg p-2">{err}</div>}
-        <div className="flex items-center gap-2">
-          <button className="btn-primary" disabled={saving}>{saving ? 'מחבר…' : 'חיבור'}</button>
-          {cfg.connected && <button type="button" className="btn-ghost text-sm" onClick={disconnect}>ניתוק</button>}
-          {saved && <span className="text-green-600 text-sm">נשמר ✓</span>}
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="rounded-xl px-4 py-2.5 text-white text-sm font-medium disabled:opacity-60" style={{ background: '#0866FF' }} disabled={connecting} onClick={connect}>
+            {connecting ? 'מתחבר…' : '🔗 חבר את Messenger'}
+          </button>
+          <button type="button" className="rounded-xl px-4 py-2.5 text-white text-sm font-medium disabled:opacity-60" style={{ background: 'linear-gradient(90deg,#f09433,#e6683c,#dc2743,#cc2366,#bc1888)' }} disabled={connecting} onClick={connect}>
+            {connecting ? 'מתחבר…' : '🔗 חבר את Instagram'}
+          </button>
         </div>
-      </form>
+      )}
+
+      <button type="button" className="text-xs text-slate-400 hover:text-slate-600 mt-3" onClick={() => setShowManual((v) => !v)}>
+        {showManual ? 'הסתר חיבור ידני' : 'חיבור ידני (מתקדם) — הדבקת Page Token'}
+      </button>
+      {showManual && (
+        <form onSubmit={saveManual} className="space-y-3 max-w-2xl mt-2 border-t pt-3">
+          <div className="grid sm:grid-cols-2 gap-3">
+            <div><label className="label">Page ID</label><input className="input" dir="ltr" value={pageId} onChange={(e) => setPageId(e.target.value)} placeholder="1234567890" /></div>
+            <div><label className="label">Instagram Account ID <span className="text-slate-400 text-xs">(אופציונלי)</span></label><input className="input" dir="ltr" value={igAccountId} onChange={(e) => setIgAccountId(e.target.value)} placeholder="17841400000000000" /></div>
+          </div>
+          <div><label className="label">Page Access Token</label><input className="input" dir="ltr" type="password" value={pageToken} onChange={(e) => setPageToken(e.target.value)} placeholder="EAAG…" /></div>
+          <button className="btn-primary" disabled={savingManual}>{savingManual ? 'מחבר…' : 'שמירה'}</button>
+        </form>
+      )}
     </div>
   );
 }

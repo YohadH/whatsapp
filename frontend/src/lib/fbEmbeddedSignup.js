@@ -75,3 +75,21 @@ export async function launchEmbeddedSignup({ appId, configId, graphVersion }) {
     );
   });
 }
+
+// One-click Messenger + Instagram connect via Facebook Login. Requests the messaging
+// scopes and resolves with the user's access token; the backend (POST /api/settings/
+// meta/connect) exchanges it for the Page token + linked Instagram account. One Page
+// connection enables BOTH Messenger and Instagram.
+export async function launchMetaConnect({ appId, graphVersion }) {
+  const FB = await loadSdk(appId, graphVersion);
+  return new Promise((resolve, reject) => {
+    FB.login(
+      (response) => {
+        const token = response?.authResponse?.accessToken;
+        if (token) resolve(token);
+        else reject(new Error('החיבור בוטל'));
+      },
+      { scope: 'pages_show_list,pages_messaging,pages_manage_metadata,instagram_basic,instagram_manage_messages', return_scopes: true }
+    );
+  });
+}

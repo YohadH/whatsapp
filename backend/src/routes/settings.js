@@ -145,7 +145,11 @@ router.get(
   asyncHandler(async (req, res) => {
     const t = await prisma.tenant.findUnique({ where: { id: req.tenantId }, select: { integrations: true } });
     const meta = readMeta(t);
-    res.json({ connected: !!(meta?.pageId && meta?.pageTokenEnc), pageId: meta?.pageId || '', igAccountId: meta?.igAccountId || '' });
+    res.json({
+      connected: !!(meta?.pageId && meta?.pageTokenEnc),
+      pageId: meta?.pageId || '', pageName: meta?.pageName || '',
+      igAccountId: meta?.igAccountId || '', igUsername: meta?.igUsername || '',
+    });
   })
 );
 
@@ -184,6 +188,57 @@ router.put(
     integrations.meta = { pageId, igAccountId, pageTokenEnc };
     await prisma.tenant.update({ where: { id: req.tenantId }, data: { integrations } });
     res.json({ connected: true, pageId, igAccountId });
+  })
+);
+
+// One-click connect: exchange a Facebook user access token (from FB Login) for the
+// managed Page + its linked Instagram business account + a Page access token, and store
+// them. This powers the "חבר את Messenger/Instagram" button; PUT /meta stays as the
+// manual paste-token fallback.
+router.post(
+  '/meta/connect',
+  asyncHandler(async (req, res) => {
+    const userToken = String(req.body?.userToken || '').trim();
+    if (!userToken) return res.status(400).json({ error: 'חסר טוקן התחברות' });
+    const gv = config.meta.graphVersion;
+    let pages;
+    try {
+      const r = await fetch(
+        `https://graph.facebook.com/${gv}/me/accounts?fields=id,name,access_token,instagram_business_account{id,username}&access_token=${encodeURIComponent(userToken)}`
+      );
+      const data = await r.json();
+      if (!r.ok) return res.status(400).json({ error: data?.error?.message || 'שגיאה בקבלת עמודי הפייסבוק' });
+      pages = data.data || [];
+    } catch {
+      return res.status(502).json({ error: 'שגיאת תקשורת מול Meta' });
+    }
+    if (!pages.length) return res.status(400).json({ error: 'לא נמצא עמוד פייסבוק מנוהל בחשבון. ודאו שהעמוד מחובר לחשבון ושהוא עמוד עסקי.' });
+    // Pick the requested page (multi-page picker), else the first.
+    const page = (req.body?.pageId && pages.find((p) => p.id === req.body.pageId)) || pages[0];
+    const igAccountId = page.instagram_business_account?.id || null;
+    const igUsername = page.instagram_business_account?.username || null;
+
+    // Same cross-tenant clash guard as PUT /meta (routing is by pageId / igAccountId).
+    const clash = await prisma.tenant.findFirst({
+      where: {
+        NOT: { id: req.tenantId },
+        OR: [
+          { integrations: { path: ['meta', 'pageId'], equals: page.id } },
+          ...(igAccountId ? [{ integrations: { path: ['meta', 'igAccountId'], equals: igAccountId } }] : []),
+        ],
+      },
+      select: { id: true },
+    });
+    if (clash) return res.status(409).json({ error: 'עמוד/חשבון Instagram זה כבר מחובר לחשבון אחר' });
+
+    const t = await prisma.tenant.findUnique({ where: { id: req.tenantId }, select: { integrations: true } });
+    const integrations = { ...(t?.integrations && typeof t.integrations === 'object' ? t.integrations : {}) };
+    integrations.meta = { pageId: page.id, pageName: page.name || null, igAccountId, igUsername, pageTokenEnc: encryptSecret(page.access_token) };
+    await prisma.tenant.update({ where: { id: req.tenantId }, data: { integrations } });
+    res.json({
+      connected: true, pageId: page.id, pageName: page.name || '', igAccountId, igUsername,
+      pages: pages.map((p) => ({ id: p.id, name: p.name })), // so the UI can offer a picker if >1
+    });
   })
 );
 
