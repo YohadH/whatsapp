@@ -63,7 +63,7 @@ router.get(
 router.get(
   '/',
   asyncHandler(async (req, res) => {
-    const { status, needsHuman, search, includeTest } = req.query;
+    const { status, needsHuman, search, includeTest, channel } = req.query;
     const page = Math.max(1, parseInt(req.query.page || '1', 10));
     const pageSize = Math.min(100, parseInt(req.query.pageSize || '25', 10));
 
@@ -71,6 +71,7 @@ router.get(
     const where = { tenantId: req.tenantId };
     if (includeTest !== '1' && includeTest !== 'true') where.isTest = false;
     if (status) where.status = status;
+    if (channel) where.channel = channel; // whatsapp | instagram | messenger
     if (needsHuman !== undefined) where.needsHuman = needsHuman === 'true';
     if (search) {
       where.OR = [

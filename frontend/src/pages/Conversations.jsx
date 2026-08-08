@@ -31,6 +31,13 @@ const FILTERS = [
   { v: 'needs_human', l: 'ממתינות לנציג' },
   { v: 'completed', l: 'הושלמו' },
 ];
+// Channel filter chips (multi-channel inbox): all / WhatsApp / Instagram / Messenger.
+const CHANNELS = [
+  { v: '', l: 'כל הערוצים' },
+  { v: 'whatsapp', l: '🟢 וואטסאפ' },
+  { v: 'instagram', l: '📸 אינסטגרם' },
+  { v: 'messenger', l: '💬 פייסבוק' },
+];
 
 const AVATAR_COLORS = ['#0ea5a4', '#2563eb', '#7c3aed', '#db2777', '#ea580c', '#059669', '#0891b2'];
 function avatarColor(seed = '') {
@@ -69,6 +76,7 @@ export default function Conversations() {
   const [loadingList, setLoadingList] = useState(true);
   const [listErr, setListErr] = useState('');
   const [filter, setFilter] = useState('');
+  const [channelFilter, setChannelFilter] = useState('');
   const [search, setSearch] = useState('');
 
   const [selId, setSelId] = useState(null);
@@ -88,12 +96,13 @@ export default function Conversations() {
     const q = new URLSearchParams();
     if (filter === 'needs_human') q.set('needsHuman', 'true');
     else if (filter) q.set('status', filter);
+    if (channelFilter) q.set('channel', channelFilter);
     q.set('pageSize', '100');
     api.get(`/api/conversations?${q.toString()}`)
       .then((r) => setItems(r.data.items || []))
       .catch((err) => setListErr(errMsg(err)))
       .finally(() => setLoadingList(false));
-  }, [filter]);
+  }, [filter, channelFilter]);
 
   useEffect(() => { loadList(); }, [loadList]);
   useEffect(() => { const t = setInterval(() => loadList(true), 10000); return () => clearInterval(t); }, [loadList]);
@@ -211,6 +220,17 @@ export default function Conversations() {
                 style={filter === f.v ? { background: WA.green } : undefined}
               >
                 {f.l}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-1.5 flex-wrap mt-1.5">
+            {CHANNELS.map((c) => (
+              <button
+                key={c.v}
+                onClick={() => setChannelFilter(c.v)}
+                className={`text-xs rounded-full px-2.5 py-1 transition ${channelFilter === c.v ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'}`}
+              >
+                {c.l}
               </button>
             ))}
           </div>
