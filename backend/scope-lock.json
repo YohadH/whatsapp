@@ -19,7 +19,7 @@
     {
       "area": "ig-messenger",
       "description": "Instagram + Facebook Messenger channel adapter, connect flow, and inbound webhook — the non-WhatsApp channels built ahead of an explicit owner go-ahead.",
-      "hardBlock": false,
+      "hardBlock": true,
       "globs": [
         "backend/src/services/metaMessaging.js",
         "backend/src/routes/settings.js",
@@ -32,7 +32,7 @@
     {
       "area": "channel-aware-engine",
       "description": "Channel-aware conversation engine + per-channel flow scoping + multi-channel inbox — engine/route surfaces that became channel-aware for IG/Messenger.",
-      "hardBlock": false,
+      "hardBlock": true,
       "globs": [
         "backend/src/services/conversationEngine.js",
         "backend/src/routes/conversations.js",
