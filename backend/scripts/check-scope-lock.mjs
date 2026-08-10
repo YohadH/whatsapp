@@ -228,12 +228,19 @@ function main() {
   }
 
   let decisionLogText = '';
+  let decisionLogReadable = true;
   try {
     decisionLogText = fs.readFileSync(DECISION_LOG_PATH, 'utf8');
   } catch {
-    // A missing decision-log means NOTHING is unlocked (fail-closed on unlock, but the
-    // default is advisory-warn so this still won't block a commit unless hardBlock).
-    console.warn(`⚠ scope-lock: decision-log not readable at ${DECISION_LOG_PATH} — treating all areas as LOCKED.`);
+    // If the decision-log can't be read (fresh clone, CI runner, sibling AgentsTeam repo
+    // not checked out), unlock-status is INDETERMINATE — we cannot tell whether the owner
+    // has opened an area or not. Per this file's header contract, a check that cannot
+    // reliably determine lock status must FAIL OPEN: it may still WARN (advisory), but it
+    // must NEVER hard-block, because a hard block with no escape hatch (other than
+    // --no-verify) is worse than an occasional false-allow. Same posture as the
+    // manifest-missing and git-diff-failure branches above.
+    decisionLogReadable = false;
+    console.warn(`⚠ scope-lock: decision-log not readable at ${DECISION_LOG_PATH} — unlock status is INDETERMINATE; failing open (advisory warnings only, NO hard block).`);
   }
 
   // Pre-compile each area's globs + unlock status.
@@ -254,7 +261,11 @@ function main() {
       if (a.unlocked) continue; // area explicitly opened by the owner → allowed
       const hit = a.matchers.find((m) => m.re.test(file));
       if (!hit) continue;
-      (a.hardBlock ? blocks : warnings).push({ file, area: a.area, glob: hit.glob });
+      // When the decision-log is unreadable we cannot confirm whether the owner unlocked
+      // this area, so a hard block would be unsafe (fail-open contract) — downgrade it to
+      // an advisory warning. When the log IS readable, honour the area's hardBlock flag.
+      const isBlock = a.hardBlock && decisionLogReadable;
+      (isBlock ? blocks : warnings).push({ file, area: a.area, glob: hit.glob });
     }
   }
 
