@@ -33,6 +33,16 @@ function appShellFallback() {
   };
 }
 
+// Dev-server proxy target for the backend. Configurable so the proxy can point at
+// a non-default backend without editing this file (avoids the "proxy points at a
+// stale/wrong backend" class of issue). Precedence:
+//   VITE_BACKEND_PROXY_TARGET  → full URL, wins if set (e.g. http://localhost:5010)
+//   BACKEND_PORT               → port only, target becomes http://localhost:<port>
+//   fallback                   → http://localhost:4010 (the historical default)
+const backendProxyTarget =
+  process.env.VITE_BACKEND_PROXY_TARGET ||
+  `http://localhost:${process.env.BACKEND_PORT || '4010'}`;
+
 export default defineConfig({
   plugins: [appShellFallback(), react()],
   build: {
@@ -49,8 +59,8 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': 'http://localhost:4010',
-      '/uploads': 'http://localhost:4010',
+      '/api': backendProxyTarget,
+      '/uploads': backendProxyTarget,
     },
   },
 });
