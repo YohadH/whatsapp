@@ -98,6 +98,18 @@ router.post(
     const statusParse = parseStatusEvents(req.body);
     res.sendStatus(200); // acknowledge fast; process inline (small scale)
 
+    // TEMP diagnostic (remove after) — UNCONDITIONAL: fires for every webhook before any
+    // early return, so we can see exactly what Meta sent and where a message is dropped.
+    console.log('[webhook-in]', JSON.stringify({
+      object: req.body?.object,
+      hasText: !!parsed?.text,
+      text: parsed?.text ? String(parsed.text).slice(0, 40) : null,
+      phone: parsed?.phone || null,
+      phoneNumberId: parsed?.phoneNumberId || null,
+      mediaKind: parsed?.media?.kind || null,
+      statusEvents: statusParse?.events?.length || 0,
+    }));
+
     // ── Instagram / Messenger ──────────────────────────────────────────────────
     // These Page-based channels arrive on the SAME webhook with object 'instagram' |
     // 'page' and a different shape (entry[].messaging[]). Handle + return before the
