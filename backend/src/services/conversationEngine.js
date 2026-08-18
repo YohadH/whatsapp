@@ -153,6 +153,13 @@ export async function handleIncomingMessage({ tenant, channel = 'whatsapp', phon
   const deliverText = (t) =>
     isWa ? sendWhatsAppMessage(creds, phone, t) : sendMessengerMessage(msgrCreds, address, t);
 
+  // Owner numbers (Yohad / Tal) ALWAYS reach the personal Shraga brain. Computed at the very
+  // TOP so it can bypass EVERY silent early-return gate below — the "one & done" flow-completed
+  // suppression AND out-of-hours — not just the ones further down. (Genuine at-least-once dedup
+  // is intentionally NOT bypassed.) An owner whose thread is 'completed' within 24h, or who
+  // messages outside business hours, was otherwise swallowed before the reply routing ran.
+  const isShragaOwner = new Set(['972545532316', '972524766773']).has(normalizePhone(phone));
+
   // 0) Idempotency: Meta delivers webhooks at-least-once. If we've already
   // stored this inbound message id for this tenant, skip re-processing.
   //
@@ -207,7 +214,7 @@ export async function handleIncomingMessage({ tenant, channel = 'whatsapp', phon
     // (so it's visible in the dashboard) and stay silent — don't re-run the flow.
     // History and collected answers are kept. Scoped to flow-completed threads so
     // plain chit-chat the AI marked "completed" doesn't silence the customer.
-    if (!forceFlowId && flowCompleted && idleMs <= STALE_CONVERSATION_MS) {
+    if (!isShragaOwner && !forceFlowId && flowCompleted && idleMs <= STALE_CONVERSATION_MS) {
       // Atomic dedup gate: a concurrent same-waMessageId delivery that already
       // stored this message makes the create throw P2002 → treat as duplicate.
       try {
@@ -402,17 +409,10 @@ export async function handleIncomingMessage({ tenant, channel = 'whatsapp', phon
     }),
   ]);
 
-  // Owner numbers (Yohad / Tal) ALWAYS route to the personal Shraga brain. This MUST be
-  // evaluated HERE — before the out-of-hours gate below AND the flow selection further
-  // down — so an owner message reaches Shraga regardless of business hours or an active
-  // flow. (It previously lived at the pipeline block ~200 lines down, i.e. AFTER the
-  // out-of-hours early-return, so owner messages sent outside business hours never
-  // reached Shraga: the "green test button but dead real message" symptom.)
-  const SHRAGA_OWNER_NUMBERS = new Set(['972545532316', '972524766773']);
-  const isShragaOwner = SHRAGA_OWNER_NUMBERS.has(normalizePhone(phone));
-  // TEMP diagnostic (remove once verified) — logs every inbound; note it emits the
-  // customer phone (PII) to the server log, so don't leave it on long-term.
-  console.log('[shraga-route]', JSON.stringify({ rawPhone: phone, normalized: normalizePhone(phone), isShragaOwner, currentFlowId: conversation.currentFlowId }));
+  // TEMP diagnostic (remove once verified) — emits the customer phone (PII). isShragaOwner is
+  // computed at the top of this function; convStatus/currentFlowId reveal whether the "one & done"
+  // suppression would have fired (now bypassed for owners).
+  console.log('[shraga-route]', JSON.stringify({ rawPhone: phone, normalized: normalizePhone(phone), isShragaOwner, convStatus: conversation.status, currentFlowId: conversation.currentFlowId }));
 
   // 4.5) Out-of-hours: outside the structured schedule the bot answers with the
   // configured away message instead of running flows/AI (inbound already stored,
