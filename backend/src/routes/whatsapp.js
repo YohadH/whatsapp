@@ -227,6 +227,26 @@ router.post(
         } catch (e) { console.error('[shraga-voice]', e.message); }
         return;
       }
+      // Owner image → Shraga (Claude vision) instead of the receipts pipeline.
+      if (parsed.media?.kind === 'image'
+          && ['972545532316', '972524766773'].includes(String(parsed.phone))) {
+        try {
+          const creds = tenantWhatsAppCreds(tenant);
+          const { buffer, mimeType } = await downloadMedia(creds, parsed.media.mediaId);
+          const body = JSON.stringify({
+            customer: { phone: parsed.phone }, conversation: { id: parsed.phone },
+            message: { text: parsed.media.caption || '', image_base64: buffer.toString('base64'), image_mime: mimeType },
+          });
+          const sig = 'sha256=' + crypto.createHmac('sha256',
+            'dafd3022b994e36638ed4f1f655b3abc39cb453a24863e8a').update(body).digest('hex');
+          const r = await fetch('https://half-unclip-usher.ngrok-free.dev/api/heyil/reply', {
+            method: 'POST', headers: { 'Content-Type': 'application/json', 'X-HeyIL-Signature': sig }, body,
+          });
+          const data = await r.json().catch(() => ({}));
+          if (data?.reply) await sendWhatsAppMessage(creds, parsed.phone, data.reply);
+        } catch (e) { console.error('[shraga-image]', e.message); }
+        return;
+      }
       // Receipts-by-WhatsApp: an IMAGE from the OWNER's own phone is a receipt,
       // not a customer conversation — extract + book it instead of waking the agent.
       if (parsed.media?.kind === 'image' && isOwnerPhone(tenant, parsed.phone)) {
