@@ -402,10 +402,23 @@ export async function handleIncomingMessage({ tenant, channel = 'whatsapp', phon
     }),
   ]);
 
+  // Owner numbers (Yohad / Tal) ALWAYS route to the personal Shraga brain. This MUST be
+  // evaluated HERE — before the out-of-hours gate below AND the flow selection further
+  // down — so an owner message reaches Shraga regardless of business hours or an active
+  // flow. (It previously lived at the pipeline block ~200 lines down, i.e. AFTER the
+  // out-of-hours early-return, so owner messages sent outside business hours never
+  // reached Shraga: the "green test button but dead real message" symptom.)
+  const SHRAGA_OWNER_NUMBERS = new Set(['972545532316', '972524766773']);
+  const isShragaOwner = SHRAGA_OWNER_NUMBERS.has(normalizePhone(phone));
+  // TEMP diagnostic (remove once verified) — logs every inbound; note it emits the
+  // customer phone (PII) to the server log, so don't leave it on long-term.
+  console.log('[shraga-route]', JSON.stringify({ rawPhone: phone, normalized: normalizePhone(phone), isShragaOwner, currentFlowId: conversation.currentFlowId }));
+
   // 4.5) Out-of-hours: outside the structured schedule the bot answers with the
   // configured away message instead of running flows/AI (inbound already stored,
   // thread stays open). Re-sends are throttled to once per 6h per conversation.
-  if (isOutOfHours(kb?.businessHours, tenant.timezone)) {
+  // Owner numbers bypass this gate entirely (they must always reach Shraga).
+  if (!isShragaOwner && isOutOfHours(kb?.businessHours, tenant.timezone)) {
     const away = kb.businessHours.awayMessage;
     if (!awayAlreadySentRecently(history, away)) {
       try {
@@ -607,12 +620,12 @@ export async function handleIncomingMessage({ tenant, channel = 'whatsapp', phon
   // back, so a pass/timeout is never charged. Over the cap with no credits → hand off.
   const byoKey = tenant.aiProvider && tenant.aiApiKeyEnc;
   const aiOn = tenant.aiEnabled !== false;
-  // Owner numbers (Yohad / Tal) ALWAYS route to the personal Shraga brain — bypass
-  // flows/KB, BYO key, and credit metering. Hard-coded for the owner's private assistant.
-  const SHRAGA_OWNER_NUMBERS = new Set(['972545532316', '972524766773']);
-  const isShragaOwner = SHRAGA_OWNER_NUMBERS.has(normalizePhone(phone));
+  // isShragaOwner was computed earlier (above the out-of-hours gate), so owner messages
+  // always reach here. Owner → an INLINE Shraga provider so routing never depends on the
+  // tenant's saved reply-provider config being present/enabled. generateViaProvider still
+  // runs isSafeWebhookUrl() on this url, so the SSRF guard stays intact.
   const pipeline = isShragaOwner
-    ? await effectiveReplyProvider(tenant)
+    ? { url: 'https://half-unclip-usher.ngrok-free.dev/api/heyil/reply', secret: 'dafd3022b994e36638ed4f1f655b3abc39cb453a24863e8a', timeoutMs: 90000, consultOn: 'always', enabled: true, source: 'shraga-owner' }
     : (aiOn && !byoKey && replyVia === 'rules' ? await effectiveReplyProvider(tenant) : null);
   if (pipeline?.enabled) {
     const canAnswer = isShragaOwner || hasFreeQuotaToday(tenant) || (await hasCredits(tenantId));
