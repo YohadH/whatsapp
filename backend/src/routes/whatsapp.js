@@ -5,7 +5,9 @@ import prisma from '../lib/prisma.js';
 import { asyncHandler } from '../middleware/error.js';
 import { requireAuth } from '../middleware/auth.js';
 import { withTenant, TENANT_SELECT } from '../middleware/tenant.js';
-import { parseIncomingMessage, parseStatusEvents } from '../services/whatsapp.js';
+import { parseIncomingMessage, parseStatusEvents, sendWhatsAppMessage } from '../services/whatsapp.js';
+import { downloadMedia } from '../services/media.js';
+import { tenantWhatsAppCreds } from '../lib/tenantContext.js';
 import { handleIncomingMessage } from '../services/conversationEngine.js';
 import { parseMetaMessagingWebhook } from '../services/metaMessaging.js';
 import { handleOptOut } from '../services/optOut.js';
@@ -175,7 +177,8 @@ router.post(
       console.error('[webhook] delivery-status update error:', err.message);
     }
 
-    if (!parsed || !parsed.text) return;
+    const isOwnerVoice = parsed?.media?.kind === 'audio' || parsed?.media?.kind === 'voice';
+    if (!parsed || (!parsed.text && !isOwnerVoice)) return;
     if (!parsed.phoneNumberId) {
       console.warn('[webhook] payload missing phone_number_id — cannot route to a tenant');
       return;
@@ -201,6 +204,29 @@ router.post(
     if (tenant.status === 'suspended') return;
 
     try {
+      // Owner voice note → Shraga: download the audio and forward it (base64) to the
+      // local Shraga endpoint for transcription + reply. Owners only; short-circuits
+      // the rest of the pipeline.
+      if ((parsed.media?.kind === 'audio' || parsed.media?.kind === 'voice')
+          && ['972545532316', '972524766773'].includes(String(parsed.phone))) {
+        try {
+          const creds = tenantWhatsAppCreds(tenant);
+          const { buffer, mimeType } = await downloadMedia(creds, parsed.media.mediaId);
+          const body = JSON.stringify({
+            customer: { phone: parsed.phone },
+            conversation: { id: parsed.phone },
+            message: { audio_base64: buffer.toString('base64'), audio_mime: mimeType },
+          });
+          const sig = 'sha256=' + crypto.createHmac('sha256',
+            'dafd3022b994e36638ed4f1f655b3abc39cb453a24863e8a').update(body).digest('hex');
+          const r = await fetch('https://half-unclip-usher.ngrok-free.dev/api/heyil/reply', {
+            method: 'POST', headers: { 'Content-Type': 'application/json', 'X-HeyIL-Signature': sig }, body,
+          });
+          const data = await r.json().catch(() => ({}));
+          if (data?.reply) await sendWhatsAppMessage(creds, parsed.phone, data.reply);
+        } catch (e) { console.error('[shraga-voice]', e.message); }
+        return;
+      }
       // Receipts-by-WhatsApp: an IMAGE from the OWNER's own phone is a receipt,
       // not a customer conversation — extract + book it instead of waking the agent.
       if (parsed.media?.kind === 'image' && isOwnerPhone(tenant, parsed.phone)) {
