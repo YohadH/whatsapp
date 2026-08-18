@@ -621,11 +621,13 @@ export async function handleIncomingMessage({ tenant, channel = 'whatsapp', phon
   const byoKey = tenant.aiProvider && tenant.aiApiKeyEnc;
   const aiOn = tenant.aiEnabled !== false;
   // isShragaOwner was computed earlier (above the out-of-hours gate), so owner messages
-  // always reach here. Owner → an INLINE Shraga provider so routing never depends on the
-  // tenant's saved reply-provider config being present/enabled. generateViaProvider still
-  // runs isSafeWebhookUrl() on this url, so the SSRF guard stays intact.
+  // always reach here. Owner → the tenant's CONFIGURED reply provider (effectiveReplyProvider),
+  // NOT a hardcoded secret: Shraga validates the HMAC signature, and only the tenant's saved
+  // secret is accepted (the "send test" button, which signs with that secret, succeeds; a
+  // hardcoded secret that differs returns 401 bad signature → no reply). generateViaProvider
+  // runs isSafeWebhookUrl() on the url, so the SSRF guard stays intact.
   const pipeline = isShragaOwner
-    ? { url: 'https://half-unclip-usher.ngrok-free.dev/api/heyil/reply', secret: 'dafd3022b994e36638ed4f1f655b3abc39cb453a24863e8a', timeoutMs: 90000, consultOn: 'always', enabled: true, source: 'shraga-owner' }
+    ? await effectiveReplyProvider(tenant)
     : (aiOn && !byoKey && replyVia === 'rules' ? await effectiveReplyProvider(tenant) : null);
   if (pipeline?.enabled) {
     const canAnswer = isShragaOwner || hasFreeQuotaToday(tenant) || (await hasCredits(tenantId));
