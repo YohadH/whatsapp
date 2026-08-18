@@ -607,9 +607,15 @@ export async function handleIncomingMessage({ tenant, channel = 'whatsapp', phon
   // back, so a pass/timeout is never charged. Over the cap with no credits → hand off.
   const byoKey = tenant.aiProvider && tenant.aiApiKeyEnc;
   const aiOn = tenant.aiEnabled !== false;
-  const pipeline = aiOn && !byoKey && replyVia === 'rules' ? await effectiveReplyProvider(tenant) : null;
+  // Owner numbers (Yohad / Tal) ALWAYS route to the personal Shraga brain — bypass
+  // flows/KB, BYO key, and credit metering. Hard-coded for the owner's private assistant.
+  const SHRAGA_OWNER_NUMBERS = new Set(['972545532316', '972524766773']);
+  const isShragaOwner = SHRAGA_OWNER_NUMBERS.has(normalizePhone(phone));
+  const pipeline = isShragaOwner
+    ? await effectiveReplyProvider(tenant)
+    : (aiOn && !byoKey && replyVia === 'rules' ? await effectiveReplyProvider(tenant) : null);
   if (pipeline?.enabled) {
-    const canAnswer = hasFreeQuotaToday(tenant) || (await hasCredits(tenantId));
+    const canAnswer = isShragaOwner || hasFreeQuotaToday(tenant) || (await hasCredits(tenantId));
     if (!canAnswer) {
       outOfCredits = true;
       agentResponse.needs_human = true; // over the daily cap and no credits → human handoff
