@@ -414,6 +414,40 @@ export async function handleIncomingMessage({ tenant, channel = 'whatsapp', phon
   // suppression would have fired (now bypassed for owners).
   console.log('[shraga-route]', JSON.stringify({ rawPhone: phone, normalized: normalizePhone(phone), isShragaOwner, convStatus: conversation.status, currentFlowId: conversation.currentFlowId }));
 
+  // ── Owner short-circuit ────────────────────────────────────────────────────
+  // Owners (Yohad / Tal) get ONLY Shraga — never a flow/default reply. We call the tenant's
+  // configured provider (its saved HMAC secret is the one Shraga accepts) but force a generous
+  // 90s timeout, since Shraga runs Claude locally (~10-40s) — longer than the 30s default,
+  // which is what let the flow's "default" message leak through when Shraga was still thinking.
+  // Then we RETURN — flows, out-of-hours and credit metering below never run for owners. If
+  // Shraga is down/passes, the owner gets silence rather than a wrong flow message (their own
+  // assistant should never answer with a customer flow).
+  if (isShragaOwner) {
+    const rp = await effectiveReplyProvider(tenant);
+    const ownerRp = rp ? { ...rp, timeoutMs: 90000, consultOn: 'always' } : null;
+    const provided = ownerRp
+      ? await generateViaProvider(tenant, { conversation, customer, phone, text, history, kb, flows }, ownerRp)
+      : null;
+    const shragaReply = provided?.reply;
+    console.log('[shraga-owner]', JSON.stringify({ providerConfigured: !!rp, gotReply: !!shragaReply }));
+    if (shragaReply) {
+      try {
+        await deliverText(shragaReply);
+      } catch (err) {
+        console.error('[shraga-owner] send failed:', err.message);
+      }
+      await prisma.message.create({
+        data: { tenantId, conversationId: conversation.id, senderType: 'agent', messageText: shragaReply, intent: 'shraga', rawPayload: { via: 'ai' } },
+      });
+    }
+    await prisma.conversation.update({
+      where: { id: conversation.id },
+      data: { lastMessage: text, lastActivityAt: new Date() },
+      select: { id: true },
+    });
+    return { conversation, agentResponse: { reply: shragaReply || '' }, replySent: !!shragaReply, shraga: true };
+  }
+
   // 4.5) Out-of-hours: outside the structured schedule the bot answers with the
   // configured away message instead of running flows/AI (inbound already stored,
   // thread stays open). Re-sends are throttled to once per 6h per conversation.
@@ -620,17 +654,13 @@ export async function handleIncomingMessage({ tenant, channel = 'whatsapp', phon
   // back, so a pass/timeout is never charged. Over the cap with no credits → hand off.
   const byoKey = tenant.aiProvider && tenant.aiApiKeyEnc;
   const aiOn = tenant.aiEnabled !== false;
-  // isShragaOwner was computed earlier (above the out-of-hours gate), so owner messages
-  // always reach here. Owner → the tenant's CONFIGURED reply provider (effectiveReplyProvider),
-  // NOT a hardcoded secret: Shraga validates the HMAC signature, and only the tenant's saved
-  // secret is accepted (the "send test" button, which signs with that secret, succeeds; a
-  // hardcoded secret that differs returns 401 bad signature → no reply). generateViaProvider
-  // runs isSafeWebhookUrl() on the url, so the SSRF guard stays intact.
-  const pipeline = isShragaOwner
-    ? await effectiveReplyProvider(tenant)
-    : (aiOn && !byoKey && replyVia === 'rules' ? await effectiveReplyProvider(tenant) : null);
+  // Owners already returned via the short-circuit above, so this path is ONLY non-owners:
+  // the central pipeline runs for a non-BYO tenant whose reply is still rules-based, and only
+  // when the AI toggle (aiEnabled) is on. With that toggle OFF, no customer ever reaches Shraga
+  // — which is what keeps Shraga scoped to the owner numbers alone.
+  const pipeline = aiOn && !byoKey && replyVia === 'rules' ? await effectiveReplyProvider(tenant) : null;
   if (pipeline?.enabled) {
-    const canAnswer = isShragaOwner || hasFreeQuotaToday(tenant) || (await hasCredits(tenantId));
+    const canAnswer = hasFreeQuotaToday(tenant) || (await hasCredits(tenantId));
     if (!canAnswer) {
       outOfCredits = true;
       agentResponse.needs_human = true; // over the daily cap and no credits → human handoff
